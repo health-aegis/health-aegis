@@ -1,0 +1,302 @@
+# ---------------------------------------------------------------------------
+# Aegis Health — Deploy Pipeline
+#
+# Triggered automatically when Build completes successfully on main.
+# Can also be dispatched manually for targeted re-deploys or hotfixes.
+#
+# Flow:
+#   1. Re-detect which services changed in the build commit
+#   2. Authenticate to Azure (OIDC) and pull AKS credentials
+#   3. kubectl set image — stamps the sha-tag onto each changed Deployment
+#   4. kubectl rollout status — blocks until pods are Ready or times out
+#   5. Smoke test — port-forward api-gateway and assert /healthz returns 200
+#   6. Notify — email on success or failure
+#
+# Required secrets:
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  — OIDC auth
+#   ACR_NAME            — registry name (without .azurecr.io)
+#   AKS_CLUSTER_NAME    — cluster name (from Terraform output)
+#   AKS_RESOURCE_GROUP  — resource group containing the cluster
+#   SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO
+#
+# Namespace convention:
+#   develop → aegis-dev   (if the namespace exists, else aegis)
+#   main    → aegis
+#   prod dispatch → aegis-prod
+# ---------------------------------------------------------------------------
+
+name: Deploy
+
+on:
+  # Auto-trigger: fires when Build succeeds on main or develop
+  workflow_run:
+    workflows: ["Build"]
+    types: [completed]
+    branches: [main, develop]
+
+  # Manual trigger: re-deploy any tag to a target environment
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [dev, prod]
+        default: dev
+      image_tag:
+        description: "Override image tag (leave blank to use commit SHA)"
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-${{ github.event.workflow_run.head_branch || inputs.environment || 'dev' }}
+  cancel-in-progress: false   # never cancel a running deploy
+
+jobs:
+  # ── JOB 1: DEPLOY ────────────────────────────────────────────────────────────
+  deploy:
+    name: "Deploy → AKS"
+    runs-on: ubuntu-latest
+
+    # For workflow_run: only proceed if the build actually succeeded
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      # Resolve namespace from trigger context
+      NAMESPACE: >-
+        ${{
+          github.event_name == 'workflow_dispatch' &&
+            (inputs.environment == 'prod' && 'aegis-prod' || 'aegis') ||
+          (github.event.workflow_run.head_branch == 'develop' && 'aegis' || 'aegis')
+        }}
+
+    steps:
+      # ── Checkout the commit that was built ───────────────────────────────────
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      # ── Resolve image tag ─────────────────────────────────────────────────────
+      # Manual dispatch can override; otherwise derive from the build commit SHA.
+      - name: Set image tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
+          else
+            SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+            echo "IMAGE_TAG=sha-${SHA:0:7}" >> "$GITHUB_ENV"
+          fi
+          echo "DEPLOY_SHA=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_ENV"
+
+      # ── Detect which services changed in this commit ──────────────────────────
+      # Same path filters as build.yml — ensures we only touch what was built.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api-gateway:
+              - 'services/api-gateway/**'
+              - 'shared/**'
+            health-records-service:
+              - 'services/health-records-service/**'
+            medication-service:
+              - 'services/medication-service/**'
+            ai-service:
+              - 'services/ai-service/**'
+            notification-worker:
+              - 'services/notification-worker/**'
+            imaging-service:
+              - 'services/imaging-service/**'
+            diagnostic-agent:
+              - 'services/diagnostic-agent-service/**'
+            coordinator-agent:
+              - 'services/coordinator-agent/**'
+            image-analysis-agent:
+              - 'services/image-analysis-agent/**'
+            patient-history-agent:
+              - 'services/patient-history-agent/**'
+            client:
+              - 'client/**'
+
+      # ── Azure Login (OIDC) ────────────────────────────────────────────────────
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ── AKS Credentials ───────────────────────────────────────────────────────
+      - name: Get AKS credentials
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
+          cluster-name:   ${{ secrets.AKS_CLUSTER_NAME }}
+
+      # ── Update image tags ─────────────────────────────────────────────────────
+      # kubectl set image patches only the container image field; the rest of the
+      # manifest (probes, resource limits, env) stays as-is from the last apply.
+      - name: Update image tags
+        run: |
+          ACR="${{ secrets.ACR_NAME }}.azurecr.io"
+          TAG="${{ env.IMAGE_TAG }}"
+          NS="${{ env.NAMESPACE }}"
+          DEPLOYED=()
+
+          update_image() {
+            local deployment="$1" container="$2" image="$3"
+            echo "→ $deployment: $image"
+            kubectl set image "deployment/$deployment" "$container=$image" -n "$NS" && DEPLOYED+=("$deployment")
+          }
+
+          [[ "${{ steps.filter.outputs.api-gateway }}"           == "true" ]] && update_image api-gateway           api-gateway           "${ACR}/api-gateway:${TAG}"
+          [[ "${{ steps.filter.outputs.health-records-service }}" == "true" ]] && update_image health-records-service health-records-service "${ACR}/health-records-service:${TAG}"
+          [[ "${{ steps.filter.outputs.medication-service }}"     == "true" ]] && update_image medication-service    medication-service    "${ACR}/medication-service:${TAG}"
+          [[ "${{ steps.filter.outputs.ai-service }}"            == "true" ]] && update_image ai-service            ai-service            "${ACR}/ai-service:${TAG}"
+          [[ "${{ steps.filter.outputs.notification-worker }}"   == "true" ]] && update_image notification-worker   notification-worker   "${ACR}/notification-worker:${TAG}"
+          [[ "${{ steps.filter.outputs.imaging-service }}"       == "true" ]] && update_image imaging-service       imaging-service       "${ACR}/imaging-service:${TAG}"
+          [[ "${{ steps.filter.outputs.diagnostic-agent }}"      == "true" ]] && update_image diagnostic-agent      diagnostic-agent      "${ACR}/diagnostic-agent:${TAG}"
+          [[ "${{ steps.filter.outputs.coordinator-agent }}"     == "true" ]] && update_image coordinator-agent     coordinator-agent     "${ACR}/coordinator-agent:${TAG}"
+          [[ "${{ steps.filter.outputs.image-analysis-agent }}"  == "true" ]] && update_image image-analysis-agent  image-analysis-agent  "${ACR}/image-analysis-agent:${TAG}"
+          [[ "${{ steps.filter.outputs.patient-history-agent }}" == "true" ]] && update_image patient-history-agent patient-history-agent "${ACR}/patient-history-agent:${TAG}"
+          [[ "${{ steps.filter.outputs.client }}"                == "true" ]] && update_image client                client                "${ACR}/client:${TAG}"
+
+          if [ ${#DEPLOYED[@]} -eq 0 ]; then
+            echo "No services changed — nothing to deploy."
+          else
+            echo "Updated: ${DEPLOYED[*]}"
+            # Persist for the rollout status step
+            printf '%s\n' "${DEPLOYED[@]}" > /tmp/deployed-services.txt
+          fi
+
+      # ── Rollout Status ────────────────────────────────────────────────────────
+      # Blocks until every updated Deployment's pods reach Ready state.
+      # Timeout per deployment: 5 minutes (sufficient for image pull + startup).
+      - name: Verify rollout status
+        run: |
+          NS="${{ env.NAMESPACE }}"
+          [ -f /tmp/deployed-services.txt ] || { echo "Nothing was deployed."; exit 0; }
+
+          FAILED=()
+          while IFS= read -r deployment; do
+            echo "⏳ Waiting for rollout: $deployment"
+            if kubectl rollout status "deployment/$deployment" -n "$NS" --timeout=5m; then
+              echo "✅ $deployment is ready"
+            else
+              echo "❌ $deployment rollout failed or timed out"
+              FAILED+=("$deployment")
+            fi
+          done < /tmp/deployed-services.txt
+
+          if [ ${#FAILED[@]} -gt 0 ]; then
+            echo ""
+            echo "Failed deployments: ${FAILED[*]}"
+            kubectl get pods -n "$NS" -l "app in ($(IFS=,; echo "${FAILED[*]}"))" --sort-by=.status.startTime
+            exit 1
+          fi
+
+      # ── Smoke Tests ───────────────────────────────────────────────────────────
+      # Port-forward the api-gateway into the runner and assert the health
+      # endpoint returns HTTP 200. Validates the new image boots correctly.
+      - name: Smoke test — api-gateway /healthz
+        run: |
+          NS="${{ env.NAMESPACE }}"
+
+          # Skip if api-gateway was not in this deploy
+          if ! grep -qx "api-gateway" /tmp/deployed-services.txt 2>/dev/null; then
+            echo "api-gateway not in this deploy — skipping smoke test"
+            exit 0
+          fi
+
+          echo "Starting port-forward to api-gateway:5000..."
+          kubectl port-forward deployment/api-gateway 15000:5000 -n "$NS" &
+          PF_PID=$!
+          trap "kill $PF_PID 2>/dev/null" EXIT
+
+          # Give the port-forward a moment to establish
+          sleep 5
+
+          echo "Testing /healthz..."
+          for attempt in 1 2 3; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:15000/healthz)
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ /healthz returned 200"
+              exit 0
+            fi
+            echo "Attempt $attempt: got $HTTP_CODE — retrying in 5s"
+            sleep 5
+          done
+
+          echo "❌ Smoke test failed — api-gateway /healthz did not return 200"
+          kubectl logs deployment/api-gateway -n "$NS" --tail=30
+          exit 1
+
+      # ── Step Summary ──────────────────────────────────────────────────────────
+      - name: Write deploy summary
+        if: always()
+        run: |
+          {
+            echo "## Aegis Deploy — \`${{ job.status }}\`"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| **Namespace** | \`${{ env.NAMESPACE }}\` |"
+            echo "| **Image tag** | \`${{ env.IMAGE_TAG }}\` |"
+            echo "| **Commit** | \`${DEPLOY_SHA:0:7}\` |"
+            echo "| **Actor** | \`${{ github.actor }}\` |"
+            echo "| **Run** | [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
+            echo ""
+            if [ -f /tmp/deployed-services.txt ]; then
+              echo "### Updated services"
+              while IFS= read -r svc; do echo "- \`$svc\`"; done < /tmp/deployed-services.txt
+            else
+              echo "_No services were updated in this run._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── JOB 2: NOTIFY ────────────────────────────────────────────────────────────
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: always()
+    steps:
+      - name: Resolve status
+        id: status
+        run: |
+          result="${{ needs.deploy.result }}"
+          case "$result" in
+            success)  echo "value=success" >> "$GITHUB_OUTPUT"; echo "emoji=✅" >> "$GITHUB_OUTPUT" ;;
+            skipped)  echo "value=skipped" >> "$GITHUB_OUTPUT"; echo "emoji=⏭️" >> "$GITHUB_OUTPUT" ;;
+            *)        echo "value=failure" >> "$GITHUB_OUTPUT"; echo "emoji=❌" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Send email notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port:    ${{ secrets.SMTP_PORT }}
+          secure:         true
+          username:       ${{ secrets.SMTP_USERNAME }}
+          password:       ${{ secrets.SMTP_PASSWORD }}
+          to:             ${{ secrets.EMAIL_TO }}
+          from:           Aegis CD <${{ secrets.SMTP_USERNAME }}>
+          subject:        "${{ steps.status.outputs.emoji }} [Aegis Deploy] ${{ steps.status.outputs.value }} — ${{ github.event.workflow_run.head_branch || 'manual' }} #${{ github.run_number }}"
+          body: |
+            Aegis Health — Deploy Pipeline
+
+            Status     : ${{ steps.status.outputs.value }}
+            Environment: ${{ env.NAMESPACE || 'aegis' }}
+            Branch     : ${{ github.event.workflow_run.head_branch || inputs.environment }}
+            Commit     : ${{ github.event.workflow_run.head_sha || github.sha }}
+            Actor      : ${{ github.actor }}
+            Run        : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ${{ needs.deploy.result == 'failure' && 'Check the run logs and pod events for failure details.' || 'All updated services passed rollout and smoke tests.' }}

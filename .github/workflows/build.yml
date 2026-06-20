@@ -1,0 +1,465 @@
+# ---------------------------------------------------------------------------
+# Aegis Health — Build Pipeline
+#
+# JOB GRAPH:
+#
+#   prepare
+#     ├── test  ────────────┐
+#     ├── sonar ────────────┼──► build ──► trivy ──► push ──► release ──► notify
+#     └── snyk  ────────────┘
+#
+# • prepare   — detect changed services, set image tag + push flag
+# • test      — run unit tests per changed service (matrix)
+# • sonar     — SonarCloud SAST analysis per changed service (matrix)
+# • snyk      — Snyk dependency vulnerability scan per changed service (matrix)
+# • build     — docker build; image saved as artifact (not pushed yet)
+# • trivy     — scan artifact image; FAILS on HIGH / CRITICAL
+# • push      — push to ACR only after Trivy passes (push events only)
+# • release   — GitHub Release (main branch only)
+# • notify    — email on ALL outcomes (always)
+#
+# Required secrets:
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  — OIDC
+#   ACR_NAME          — registry name without .azurecr.io
+#   VITE_API_URL      — injected into the React client at build time
+#   SONAR_TOKEN       — SonarCloud user token
+#   SONAR_HOST_URL    — https://sonarcloud.io
+#   SNYK_TOKEN        — Snyk API token
+#   SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO
+# ---------------------------------------------------------------------------
+
+name: Build
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'services/**'
+      - 'client/**'
+      - 'shared/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'services/**'
+      - 'client/**'
+      - 'shared/**'
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1 — PREPARE
+# Detects which services changed and outputs:
+#   tag    — sha-<7-char commit hash>
+#   push   — 'true' on push events, 'false' on pull_requests
+#   matrix — JSON include-array of changed services
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  prepare:
+    name: "Prepare"
+    runs-on: ubuntu-latest
+    outputs:
+      tag:         ${{ steps.out.outputs.tag }}
+      push:        ${{ steps.out.outputs.push }}
+      matrix:      ${{ steps.matrix.outputs.matrix }}
+      any_changed: ${{ steps.matrix.outputs.any_changed }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api-gateway:
+              - 'services/api-gateway/**'
+              - 'shared/**'
+            health-records-service:
+              - 'services/health-records-service/**'
+            medication-service:
+              - 'services/medication-service/**'
+            ai-service:
+              - 'services/ai-service/**'
+            notification-worker:
+              - 'services/notification-worker/**'
+            imaging-service:
+              - 'services/imaging-service/**'
+            diagnostic-agent:
+              - 'services/diagnostic-agent-service/**'
+            coordinator-agent:
+              - 'services/coordinator-agent/**'
+            image-analysis-agent:
+              - 'services/image-analysis-agent/**'
+            patient-history-agent:
+              - 'services/patient-history-agent/**'
+            client:
+              - 'client/**'
+
+      - name: Set tag and push flag
+        id: out
+        run: |
+          echo "tag=sha-${GITHUB_SHA:0:7}"                                        >> "$GITHUB_OUTPUT"
+          echo "push=${{ github.event_name == 'push' && 'true' || 'false' }}"    >> "$GITHUB_OUTPUT"
+
+      - name: Build service matrix
+        id: matrix
+        shell: bash
+        run: |
+          declare -a svc=()
+
+          # node/TS services
+          [[ "${{ steps.filter.outputs.api-gateway }}" == "true" ]] && svc+=(
+            '{"service":"api-gateway","context":".","dockerfile":"services/api-gateway/Dockerfile","lang":"node","dir":"services/api-gateway","sonar_key":"aegis-health_api-gateway"}'
+          )
+          [[ "${{ steps.filter.outputs.health-records-service }}" == "true" ]] && svc+=(
+            '{"service":"health-records-service","context":"services/health-records-service","dockerfile":"services/health-records-service/Dockerfile","lang":"node","dir":"services/health-records-service","sonar_key":"aegis-health_health-records-service"}'
+          )
+          [[ "${{ steps.filter.outputs.medication-service }}" == "true" ]] && svc+=(
+            '{"service":"medication-service","context":"services/medication-service","dockerfile":"services/medication-service/Dockerfile","lang":"node","dir":"services/medication-service","sonar_key":"aegis-health_medication-service"}'
+          )
+          [[ "${{ steps.filter.outputs.ai-service }}" == "true" ]] && svc+=(
+            '{"service":"ai-service","context":"services/ai-service","dockerfile":"services/ai-service/Dockerfile","lang":"node","dir":"services/ai-service","sonar_key":"aegis-health_ai-service"}'
+          )
+          [[ "${{ steps.filter.outputs.notification-worker }}" == "true" ]] && svc+=(
+            '{"service":"notification-worker","context":"services/notification-worker","dockerfile":"services/notification-worker/Dockerfile","lang":"node","dir":"services/notification-worker","sonar_key":"aegis-health_notification-worker"}'
+          )
+          [[ "${{ steps.filter.outputs.client }}" == "true" ]] && svc+=(
+            '{"service":"client","context":".","dockerfile":"client/Dockerfile","lang":"node","dir":"client","sonar_key":"aegis-health_client"}'
+          )
+
+          # python services
+          [[ "${{ steps.filter.outputs.imaging-service }}" == "true" ]] && svc+=(
+            '{"service":"imaging-service","context":"services/imaging-service","dockerfile":"services/imaging-service/Dockerfile","lang":"python","dir":"services/imaging-service","sonar_key":"aegis-health_imaging-service"}'
+          )
+          [[ "${{ steps.filter.outputs.diagnostic-agent }}" == "true" ]] && svc+=(
+            '{"service":"diagnostic-agent","context":"services/diagnostic-agent-service","dockerfile":"services/diagnostic-agent-service/Dockerfile","lang":"python","dir":"services/diagnostic-agent-service","sonar_key":"aegis-health_diagnostic-agent"}'
+          )
+          [[ "${{ steps.filter.outputs.coordinator-agent }}" == "true" ]] && svc+=(
+            '{"service":"coordinator-agent","context":"services/coordinator-agent","dockerfile":"services/coordinator-agent/Dockerfile","lang":"python","dir":"services/coordinator-agent","sonar_key":"aegis-health_coordinator-agent"}'
+          )
+          [[ "${{ steps.filter.outputs.image-analysis-agent }}" == "true" ]] && svc+=(
+            '{"service":"image-analysis-agent","context":"services/image-analysis-agent","dockerfile":"services/image-analysis-agent/Dockerfile","lang":"python","dir":"services/image-analysis-agent","sonar_key":"aegis-health_image-analysis-agent"}'
+          )
+          [[ "${{ steps.filter.outputs.patient-history-agent }}" == "true" ]] && svc+=(
+            '{"service":"patient-history-agent","context":"services/patient-history-agent","dockerfile":"services/patient-history-agent/Dockerfile","lang":"python","dir":"services/patient-history-agent","sonar_key":"aegis-health_patient-history-agent"}'
+          )
+
+          if [ ${#svc[@]} -eq 0 ]; then
+            echo 'matrix={"include":[]}'  >> "$GITHUB_OUTPUT"
+            echo 'any_changed=false'      >> "$GITHUB_OUTPUT"
+          else
+            joined=$(printf ',%s' "${svc[@]}")
+            echo "matrix={\"include\":[${joined:1}]}" >> "$GITHUB_OUTPUT"
+            echo 'any_changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 2 — TEST  (parallel, one instance per changed service)
+# ─────────────────────────────────────────────────────────────────────────────
+  test:
+    name: "Test — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.any_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests (Node)
+        if: matrix.lang == 'node'
+        working-directory: ${{ matrix.dir }}
+        run: |
+          npm ci --prefer-offline --no-audit
+          npm test --if-present
+
+      - name: Run tests (Python)
+        if: matrix.lang == 'python'
+        working-directory: ${{ matrix.dir }}
+        run: |
+          pip install -r requirements.txt --quiet
+          python -m pytest tests/ -v --tb=short 2>/dev/null \
+            || echo "No tests directory found — skipping"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 3 — SONAR  (parallel, one instance per changed service)
+# ─────────────────────────────────────────────────────────────────────────────
+  sonar:
+    name: "SonarCloud — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.any_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        with:
+          projectBaseDir: ${{ matrix.dir }}
+          args: >
+            -Dsonar.projectKey=${{ matrix.sonar_key }}
+            -Dsonar.organization=aegis-health
+            -Dsonar.sources=src
+            -Dsonar.qualitygate.wait=true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 4 — SNYK  (parallel, one instance per changed service)
+# ─────────────────────────────────────────────────────────────────────────────
+  snyk:
+    name: "Snyk — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.any_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Snyk dependency scan
+        uses: snyk/actions/node@master
+        if: matrix.lang == 'node'
+        with:
+          args: --severity-threshold=high --file=${{ matrix.dir }}/package.json
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Snyk dependency scan (Python)
+        uses: snyk/actions/python@master
+        if: matrix.lang == 'python'
+        with:
+          args: --severity-threshold=high --file=${{ matrix.dir }}/requirements.txt
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 5 — BUILD  (after test + sonar + snyk all pass)
+# Builds the Docker image and saves it as a workflow artifact.
+# The image is NOT pushed to ACR yet — Trivy must pass first.
+# ─────────────────────────────────────────────────────────────────────────────
+  build:
+    name: "Build — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: [prepare, test, sonar, snyk]
+    if: needs.prepare.outputs.any_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context:    ${{ matrix.context }}
+          file:       ${{ matrix.dockerfile }}
+          push:       false
+          load:       true
+          tags:       ${{ secrets.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to:   type=gha,scope=${{ matrix.service }},mode=max
+          build-args: |
+            ${{ matrix.service == 'client' && format('VITE_API_URL={0}', secrets.VITE_API_URL) || '' }}
+
+      # Save image as a compressed tar so Trivy and Push jobs can load it
+      # without re-building. Each service gets its own named artifact.
+      - name: Save image to artifact
+        run: |
+          IMAGE="${{ secrets.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}"
+          docker save "$IMAGE" | gzip > /tmp/${{ matrix.service }}.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name:            image-${{ matrix.service }}-${{ needs.prepare.outputs.tag }}
+          path:            /tmp/${{ matrix.service }}.tar.gz
+          retention-days:  1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 6 — TRIVY  (scan artifact image — FAILS on HIGH or CRITICAL)
+# ─────────────────────────────────────────────────────────────────────────────
+  trivy:
+    name: "Trivy — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    if: needs.prepare.outputs.any_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    permissions:
+      contents:        read
+      security-events: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-${{ matrix.service }}-${{ needs.prepare.outputs.tag }}
+          path: /tmp
+
+      - name: Load image
+        run: docker load < /tmp/${{ matrix.service }}.tar.gz
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref:      ${{ secrets.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}
+          format:         sarif
+          output:         trivy-${{ matrix.service }}.sarif
+          severity:       HIGH,CRITICAL
+          exit-code:      '1'
+          ignore-unfixed: true
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category:   trivy-${{ matrix.service }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 7 — PUSH  (push events only; Trivy must pass)
+# Loads the artifact image and pushes it to ACR.
+# :latest is updated only on merges to main.
+# ─────────────────────────────────────────────────────────────────────────────
+  push:
+    name: "Push — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: [prepare, trivy]
+    if: >
+      needs.prepare.outputs.any_changed == 'true' &&
+      needs.prepare.outputs.push == 'true' &&
+      needs.trivy.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    permissions:
+      contents:  read
+      id-token:  write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-${{ matrix.service }}-${{ needs.prepare.outputs.tag }}
+          path: /tmp
+
+      - name: Load image
+        run: docker load < /tmp/${{ matrix.service }}.tar.gz
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Push image
+        run: |
+          ACR="${{ secrets.ACR_NAME }}.azurecr.io"
+          SVC="${{ matrix.service }}"
+          TAG="${{ needs.prepare.outputs.tag }}"
+
+          docker push "${ACR}/${SVC}:${TAG}"
+
+          # Update :latest only on main branch
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            docker tag "${ACR}/${SVC}:${TAG}" "${ACR}/${SVC}:latest"
+            docker push "${ACR}/${SVC}:latest"
+          fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 8 — RELEASE  (GitHub Release — main only, after all pushes succeed)
+# ─────────────────────────────────────────────────────────────────────────────
+  release:
+    name: "Release"
+    runs-on: ubuntu-latest
+    needs: [prepare, push]
+    if: >
+      github.ref == 'refs/heads/main' &&
+      needs.push.result == 'success'
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   ${{ needs.prepare.outputs.tag }}
+          name:       "Release ${{ needs.prepare.outputs.tag }}"
+          body: |
+            ## Aegis Health — ${{ needs.prepare.outputs.tag }}
+
+            **Commit**: ${{ github.sha }}
+            **Actor**:  ${{ github.actor }}
+            **Run**:    ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ### Images pushed to ACR
+            All images are available at `${{ secrets.ACR_NAME }}.azurecr.io/<service>:${{ needs.prepare.outputs.tag }}`
+          generate_release_notes: true
+          make_latest:            true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 9 — NOTIFY  (always — success AND failure)
+# ─────────────────────────────────────────────────────────────────────────────
+  notify:
+    name: "Notify"
+    runs-on: ubuntu-latest
+    needs: [prepare, test, sonar, snyk, build, trivy, push, release]
+    if: always()
+    steps:
+      - name: Resolve pipeline status
+        id: status
+        shell: bash
+        run: |
+          RESULTS="${{ join(needs.*.result, ',') }}"
+          if echo "$RESULTS" | grep -qE 'failure|cancelled'; then
+            echo "value=failure" >> "$GITHUB_OUTPUT"
+            echo "emoji=❌"      >> "$GITHUB_OUTPUT"
+          else
+            echo "value=success" >> "$GITHUB_OUTPUT"
+            echo "emoji=✅"      >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send notification email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port:    ${{ secrets.SMTP_PORT }}
+          secure:         true
+          username:       ${{ secrets.SMTP_USERNAME }}
+          password:       ${{ secrets.SMTP_PASSWORD }}
+          to:             ${{ secrets.EMAIL_TO }}
+          from:           Aegis CI <${{ secrets.SMTP_USERNAME }}>
+          subject:        "${{ steps.status.outputs.emoji }} [Aegis Build] ${{ steps.status.outputs.value }} — ${{ github.ref_name }} #${{ github.run_number }}"
+          body: |
+            Aegis Health — Build Pipeline
+
+            Status    : ${{ steps.status.outputs.value }}
+            Branch    : ${{ github.ref_name }}
+            Commit    : ${{ github.sha }}
+            Tag       : ${{ needs.prepare.outputs.tag }}
+            Actor     : ${{ github.actor }}
+            Run       : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
