@@ -1,0 +1,297 @@
+
+# ─── Aegis Health — Microservices Architecture ────────────────────────────────
+# Services match Finance-Flowapp domain-separated structure.
+
+services:
+
+  # ── MongoDB ────────────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7.0
+    container_name: aegis-mongodb
+    restart: unless-stopped
+    # No host port binding — agents connect via internal aegis-net (mongodb:27017)
+    # External port 27017 already used by mono-insurance-mongo on this host
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: ai-health-agent
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aegis-net
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: aegis-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: aegis_imaging
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aegis-net
+
+  # ── Azurite (Blob Storage Emulator) ──────────────────────────────────────
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    container_name: aegis-azurite
+    restart: unless-stopped
+    ports:
+      - "10000:10000"
+      - "10001:10001"
+      - "10002:10002"
+    networks:
+      - aegis-net
+
+  # ── Health Records Service (port 5001) ────────────────────────────────────
+  health-records-service:
+    build:
+      context: ./services/health-records-service
+      dockerfile: Dockerfile
+    container_name: aegis-health-records
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      PORT: 5001
+      MONGODB_URI: mongodb://mongodb:27017/ai-health-agent
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - aegis-net
+
+  # ── Medication Service (port 5002) ────────────────────────────────────────
+  medication-service:
+    build:
+      context: ./services/medication-service
+      dockerfile: Dockerfile
+    container_name: aegis-medication
+    restart: unless-stopped
+    ports:
+      - "5002:5002"
+    environment:
+      PORT: 5002
+      MONGODB_URI: mongodb://mongodb:27017/ai-health-agent
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - aegis-net
+
+  # ── API Gateway (port 5000) ───────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: .
+      dockerfile: ./services/api-gateway/Dockerfile
+    container_name: aegis-api-gateway
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: 5000
+      MONGODB_URI: mongodb://mongodb:27017/ai-health-agent
+      JWT_SECRET: ${JWT_SECRET:-aegis_super_secret_key_change_in_production}
+      IMAGING_SERVICE_URL: http://imaging-service:5004
+      DIAGNOSTICS_SERVICE_URL: http://diagnostic-agent-service:5005
+      COORDINATOR_AGENT_URL: http://coordinator-agent:8000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - aegis-net
+
+  # ── AI Service (port 5003) ─────────────────────────────────────────────────
+  ai-service:
+    build:
+      context: ./services/ai-service
+      dockerfile: Dockerfile
+    container_name: aegis-ai
+    restart: unless-stopped
+    ports:
+      - "5003:5003"
+    environment:
+      PORT: 5003
+      MONGODB_URI: mongodb://mongodb:27017/ai-health-agent
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - aegis-net
+
+  # ── Notification Worker (background) ──────────────────────────────────────
+  notification-worker:
+    build:
+      context: ./services/notification-worker
+      dockerfile: Dockerfile
+    container_name: aegis-notification-worker
+    restart: unless-stopped
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/ai-health-agent
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      TZ: Asia/Kolkata
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - aegis-net
+
+  # ── FastAPI Imaging Service (port 5004) ──────────────────────────────────
+  imaging-service:
+    build:
+      context: ./services/imaging-service
+      dockerfile: Dockerfile
+    container_name: aegis-imaging
+    restart: unless-stopped
+    ports:
+      - "5004:5004"
+    environment:
+      PORT: 5004
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/aegis_imaging
+      AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+    depends_on:
+      - postgres
+      - azurite
+    networks:
+      - aegis-net
+
+  # ── FastAPI Diagnostic Agent (port 5005) ─────────────────────────────────
+  diagnostic-agent-service:
+    build:
+      context: ./services/diagnostic-agent-service
+      dockerfile: Dockerfile
+    container_name: aegis-diagnostic-agent
+    restart: unless-stopped
+    ports:
+      - "5005:5005"
+    environment:
+      PORT: 5005
+      AZURE_AI_ENDPOINT: "https://mock-endpoint.openai.azure.com"
+      AZURE_AI_KEY: "mock-key"
+    networks:
+      - aegis-net
+
+  # ── React Frontend (port 3000) ─────────────────────────────────────────────
+  client:
+    build:
+      context: .
+      dockerfile: ./client/Dockerfile
+    container_name: aegis-client
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - health-records-service
+      - medication-service
+      - ai-service
+      - api-gateway
+      - imaging-service
+      - diagnostic-agent-service
+      - coordinator-agent
+      - image-analysis-agent
+      - patient-history-agent
+    networks:
+      - aegis-net
+
+  # ─── Multi-Agent Layer ────────────────────────────────────────────────────
+
+  # ── Coordinator Agent (port 8000) ─────────────────────────────────────────
+  coordinator-agent:
+    build:
+      context: ./services/coordinator-agent
+      dockerfile: Dockerfile
+    container_name: aegis-coordinator-agent
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      AZURE_AI_ENDPOINT: ${AZURE_AI_ENDPOINT:-}
+      AZURE_AI_KEY: ${AZURE_AI_KEY:-}
+      IMAGE_ANALYSIS_AGENT_URL: http://image-analysis-agent:8001
+      PATIENT_HISTORY_AGENT_URL: http://patient-history-agent:8002
+    depends_on:
+      - image-analysis-agent
+      - patient-history-agent
+    networks:
+      - aegis-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Image Analysis Agent (port 8001) ──────────────────────────────────────
+  image-analysis-agent:
+    build:
+      context: ./services/image-analysis-agent
+      dockerfile: Dockerfile
+    container_name: aegis-image-analysis-agent
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/ai-health-agent
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - aegis-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Patient History Agent (port 8002) ─────────────────────────────────────
+  patient-history-agent:
+    build:
+      context: ./services/patient-history-agent
+      dockerfile: Dockerfile
+    container_name: aegis-patient-history-agent
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/ai-health-agent
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/aegis_imaging
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - aegis-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# ─── Volumes & Network ────────────────────────────────────────────────────────
+volumes:
+  mongo_data:
+  postgres_data:
+
+networks:
+  aegis-net:
+    driver: bridge

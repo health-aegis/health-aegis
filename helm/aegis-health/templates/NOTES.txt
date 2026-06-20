@@ -1,0 +1,23 @@
+Aegis Health has been deployed to namespace "{{ .Release.Namespace }}".
+
+Workloads:
+{{- range .Values.services }}
+  - {{ .name }}{{ if .worker }} (worker){{ else }} :{{ .port }}{{ end }}
+{{- end }}
+{{- if .Values.frontend.enabled }}
+  - {{ .Values.frontend.name }} :{{ .Values.frontend.port }}
+{{- end }}
+{{- if .Values.postgres.enabled }}
+  - postgres :5432 (in-cluster)
+{{- end }}
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} get pods
+  kubectl -n {{ .Release.Namespace }} get gateway,httproute
+
+Get the public entrypoint (KGateway LoadBalancer IP):
+  kubectl -n {{ .Release.Namespace }} get gateway {{ .Values.gateway.name }} -o jsonpath='{.status.addresses[0].value}'
+
+If pods are stuck in CreateContainerConfigError, the Key Vault CSI secret
+sync hasn't completed — confirm workloadIdentity.clientId and keyVault.name/tenantId
+were set correctly (from Terraform outputs).

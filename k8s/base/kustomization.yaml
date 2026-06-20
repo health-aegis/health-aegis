@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../01-rbac
+  - ../02-secrets
+  - ../03-storage
+  - ../04-network-policies
+  - ../05-data/mongodb
+  - ../06-backend/health-records-service
+  - ../06-backend/medication-service
+  - ../06-backend/ai-service
+  - ../06-backend/notification-worker
+  - ../07-frontend
+  - ../08-gateway

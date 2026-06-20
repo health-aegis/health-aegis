@@ -1,0 +1,157 @@
+# ─── Aegis Health — Build & Deploy (Multi-Container + Multi-Agent Layer) ──────
+# Builds all microservice images including the 3 new agent services,
+# pushes to ACR, then deploys manifests to AKS.
+
+name: Build and deploy Aegis Health to Azure App Service
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+  AZURE_WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # Stage 1 — Build all Docker images and push to Azure Container Registry
+  # ────────────────────────────────────────────────────────────────────────────
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      # ── Existing services (unchanged) ────────────────────────────────────────
+
+      - name: Build and push — API Gateway
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/aegis-api-gateway:${{ github.sha }} \
+                        -t ${{ env.ACR_LOGIN_SERVER }}/aegis-api-gateway:latest \
+                        -f ./services/api-gateway/Dockerfile .
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aegis-api-gateway --all-tags
+
+      - name: Build and push — Health Records Service
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/aegis-health-records:${{ github.sha }} \
+                        -t ${{ env.ACR_LOGIN_SERVER }}/aegis-health-records:latest \
+                        -f ./services/health-records-service/Dockerfile ./services/health-records-service
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aegis-health-records --all-tags
+
+      - name: Build and push — Medication Service
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/aegis-medication:${{ github.sha }} \
+                        -t ${{ env.ACR_LOGIN_SERVER }}/aegis-medication:latest \
+                        -f ./services/medication-service/Dockerfile ./services/medication-service
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aegis-medication --all-tags
+
+      - name: Build and push — AI Service
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/aegis-ai:${{ github.sha }} \
+                        -t ${{ env.ACR_LOGIN_SERVER }}/aegis-ai:latest \
+                        -f ./services/ai-service/Dockerfile ./services/ai-service
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aegis-ai --all-tags
+
+      - name: Build and push — Notification Worker
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/aegis-notification-worker:${{ github.sha }} \
+                        -t ${{ env.ACR_LOGIN_SERVER }}/aegis-notification-worker:latest \
+                        -f ./services/notification-worker/Dockerfile ./services/notification-worker
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aegis-notification-worker --all-tags
+
+      - name: Build and push — Client (React + Nginx)
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/aegis-client:${{ github.sha }} \
+                        -t ${{ env.ACR_LOGIN_SERVER }}/aegis-client:latest \
+                        -f ./client/Dockerfile .
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aegis-client --all-tags
+
+      # ── Multi-Agent Layer (NEW) ───────────────────────────────────────────────
+
+      - name: Build and push — Coordinator Agent
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/coordinator-agent:${{ github.sha }} \
+                        -t ${{ env.ACR_LOGIN_SERVER }}/coordinator-agent:latest \
+                        -f ./services/coordinator-agent/Dockerfile ./services/coordinator-agent
+          docker push ${{ env.ACR_LOGIN_SERVER }}/coordinator-agent --all-tags
+
+      - name: Build and push — Image Analysis Agent
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/image-analysis-agent:${{ github.sha }} \
+                        -t ${{ env.ACR_LOGIN_SERVER }}/image-analysis-agent:latest \
+                        -f ./services/image-analysis-agent/Dockerfile ./services/image-analysis-agent
+          docker push ${{ env.ACR_LOGIN_SERVER }}/image-analysis-agent --all-tags
+
+      - name: Build and push — Patient History Agent
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/patient-history-agent:${{ github.sha }} \
+                        -t ${{ env.ACR_LOGIN_SERVER }}/patient-history-agent:latest \
+                        -f ./services/patient-history-agent/Dockerfile ./services/patient-history-agent
+          docker push ${{ env.ACR_LOGIN_SERVER }}/patient-history-agent --all-tags
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Stage 2 — Deploy to AKS (apply updated manifests)
+  # ────────────────────────────────────────────────────────────────────────────
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set AKS context
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} \
+            --name ${{ secrets.AKS_CLUSTER_NAME }} \
+            --overwrite-existing
+
+      - name: Substitute ACR name in manifests
+        run: |
+          find k8s/06-backend -name "*.yaml" \
+            -exec sed -i "s/__ACR_NAME__/${{ env.ACR_NAME }}/g" {} \;
+
+      - name: Apply agent manifests
+        run: |
+          kubectl apply -f k8s/06-backend/coordinator-agent/deployment.yaml
+          kubectl apply -f k8s/06-backend/image-analysis-agent/deployment.yaml
+          kubectl apply -f k8s/06-backend/patient-history-agent/deployment.yaml
+
+      - name: Restart existing deployments (pick up new api-gateway image)
+        run: |
+          kubectl rollout restart deployment/api-gateway -n aegis
+          kubectl rollout restart deployment/aegis-client -n aegis
+
+      - name: Verify agent rollout
+        run: |
+          kubectl rollout status deployment/coordinator-agent -n aegis --timeout=120s
+          kubectl rollout status deployment/image-analysis-agent -n aegis --timeout=120s
+          kubectl rollout status deployment/patient-history-agent -n aegis --timeout=120s

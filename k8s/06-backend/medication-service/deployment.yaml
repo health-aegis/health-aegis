@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: medication-service
+  namespace: aegis
+  labels:
+    app: medication-service
+    app.kubernetes.io/part-of: aegis-health
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: medication-service
+  template:
+    metadata:
+      labels:
+        app: medication-service
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: aegis-workload-identity
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: aegis-kv-secret-provider
+      containers:
+        - name: medication-service
+          image: __ACR_NAME__.azurecr.io/medication-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5002
+              name: http
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          envFrom:
+            - secretRef:
+                name: aegis-kv-secrets
+            - configMapRef:
+                name: aegis-config
+          env:
+            - name: PORT
+              value: "5002"
+          readinessProbe:
+            tcpSocket:
+              port: 5002
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 5002
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "400m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: medication-service
+  namespace: aegis
+spec:
+  selector:
+    app: medication-service
+  ports:
+    - port: 5002
+      targetPort: 5002
+      name: http
+  type: ClusterIP

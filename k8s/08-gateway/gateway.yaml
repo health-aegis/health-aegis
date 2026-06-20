@@ -1,0 +1,19 @@
+# ─── KGateway — Gateway Resource ─────────────────────────────────────────────
+# Uses Kubernetes Gateway API (kgateway.dev) instead of legacy Ingress.
+# KGateway creates an Azure LoadBalancer automatically.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: aegis-gateway
+  namespace: aegis
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: "/healthz/ready"
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same

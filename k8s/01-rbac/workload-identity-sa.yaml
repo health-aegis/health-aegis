@@ -1,0 +1,13 @@
+# ─── Workload Identity ServiceAccount ─────────────────────────────────────────
+# All pods use this SA to authenticate to Azure Key Vault via OIDC federation.
+# The provisioning script populates __MANAGED_IDENTITY_CLIENT_ID__ at deploy time.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aegis-workload-identity
+  namespace: aegis
+  annotations:
+    azure.workload.identity/client-id: "__MANAGED_IDENTITY_CLIENT_ID__"
+  labels:
+    azure.workload.identity/use: "true"
+    app.kubernetes.io/name: aegis-health

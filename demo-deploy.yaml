@@ -1,0 +1,782 @@
+# ─── Aegis Health — Demo Deployment ──────────────────────────────────────────
+# Single-file manifest for AKS demo.
+# Prerequisites:
+#   kubectl create namespace aegis
+#   kubectl create secret generic aegis-secrets -n aegis \   (see README below)
+#   Images pushed to aegishealthacr2026.azurecr.io
+#
+# Apply:  kubectl apply -f demo-deploy.yaml
+# Access: kubectl get svc client-service -n aegis   (EXTERNAL-IP → port 80)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── ConfigMap (non-secret config) ─────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aegis-config
+  namespace: aegis
+data:
+  NODE_ENV: "production"
+  PORT: "5000"
+  HEALTH_RECORDS_SERVICE_URL: "http://health-records-service:5001"
+  MEDICATION_SERVICE_URL: "http://medication-service:5002"
+  AI_SERVICE_URL: "http://ai-service:5003"
+  IMAGING_SERVICE_URL: "http://imaging-service:5004"
+  DIAGNOSTICS_SERVICE_URL: "http://diagnostic-agent-service:5005"
+  COORDINATOR_AGENT_URL: "http://coordinator-agent:8000"
+  IMAGE_ANALYSIS_AGENT_URL: "http://image-analysis-agent:8001"
+  PATIENT_HISTORY_AGENT_URL: "http://patient-history-agent:8002"
+  TZ: "Asia/Kolkata"
+
+---
+# ─── MongoDB ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-pvc
+  namespace: aegis
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      initContainers:
+        - name: init-mongo-dir
+          image: busybox
+          command: ["sh", "-c", "mkdir -p /data/db/mongodata && chmod 777 /data/db/mongodata"]
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+      containers:
+        - name: mongodb
+          image: mongo:7.0
+          ports:
+            - containerPort: 27017
+          env:
+            - name: MONGO_INITDB_DATABASE
+              value: "ai-health-agent"
+          args: ["--dbpath", "/data/db/mongodata"]
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          readinessProbe:
+            exec:
+              command: ["mongosh", "--eval", "db.adminCommand('ping')"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mongo-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: aegis
+spec:
+  selector:
+    app: mongodb
+  ports:
+    - port: 27017
+      targetPort: 27017
+
+---
+# ─── PostgreSQL ───────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: aegis
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_DB
+              value: "aegis_imaging"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 5
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: aegis
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+---
+# ─── Azurite (local blob storage emulator) ────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: azurite
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: azurite
+  template:
+    metadata:
+      labels:
+        app: azurite
+    spec:
+      containers:
+        - name: azurite
+          image: mcr.microsoft.com/azure-storage/azurite
+          ports:
+            - containerPort: 10000
+            - containerPort: 10001
+            - containerPort: 10002
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "128Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: azurite
+  namespace: aegis
+spec:
+  selector:
+    app: azurite
+  ports:
+    - name: blob
+      port: 10000
+      targetPort: 10000
+    - name: queue
+      port: 10001
+      targetPort: 10001
+    - name: table
+      port: 10002
+      targetPort: 10002
+
+---
+# ─── Health Records Service (port 5001) ───────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-records-service
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: health-records-service
+  template:
+    metadata:
+      labels:
+        app: health-records-service
+    spec:
+      containers:
+        - name: health-records-service
+          image: aegishealthacr2026.azurecr.io/health-records-service:latest
+          ports:
+            - containerPort: 5001
+          env:
+            - name: PORT
+              value: "5001"
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: MONGODB_URI
+          readinessProbe:
+            httpGet: { path: /healthz, port: 5001 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "400m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: health-records-service
+  namespace: aegis
+spec:
+  selector:
+    app: health-records-service
+  ports:
+    - port: 5001
+      targetPort: 5001
+
+---
+# ─── Medication Service (port 5002) ───────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: medication-service
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: medication-service
+  template:
+    metadata:
+      labels:
+        app: medication-service
+    spec:
+      containers:
+        - name: medication-service
+          image: aegishealthacr2026.azurecr.io/medication-service:latest
+          ports:
+            - containerPort: 5002
+          env:
+            - name: PORT
+              value: "5002"
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: MONGODB_URI
+          readinessProbe:
+            httpGet: { path: /healthz, port: 5002 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "400m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: medication-service
+  namespace: aegis
+spec:
+  selector:
+    app: medication-service
+  ports:
+    - port: 5002
+      targetPort: 5002
+
+---
+# ─── AI Service / Gemini Chat (port 5003) ─────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-service
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-service
+  template:
+    metadata:
+      labels:
+        app: ai-service
+    spec:
+      containers:
+        - name: ai-service
+          image: aegishealthacr2026.azurecr.io/ai-service:latest
+          ports:
+            - containerPort: 5003
+          env:
+            - name: PORT
+              value: "5003"
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: MONGODB_URI
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: GEMINI_API_KEY
+          readinessProbe:
+            httpGet: { path: /healthz, port: 5003 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "400m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-service
+  namespace: aegis
+spec:
+  selector:
+    app: ai-service
+  ports:
+    - port: 5003
+      targetPort: 5003
+
+---
+# ─── Imaging Service (port 5004) ──────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: imaging-service
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: imaging-service
+  template:
+    metadata:
+      labels:
+        app: imaging-service
+    spec:
+      containers:
+        - name: imaging-service
+          image: aegishealthacr2026.azurecr.io/imaging-service:latest
+          ports:
+            - containerPort: 5004
+          env:
+            - name: PORT
+              value: "5004"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: DATABASE_URL
+            - name: AZURE_STORAGE_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: AZURE_STORAGE_CONNECTION_STRING
+          readinessProbe:
+            httpGet: { path: /health, port: 5004 }
+            initialDelaySeconds: 25
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "192Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: imaging-service
+  namespace: aegis
+spec:
+  selector:
+    app: imaging-service
+  ports:
+    - port: 5004
+      targetPort: 5004
+
+---
+# ─── Diagnostic Agent Service (port 5005) ─────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: diagnostic-agent-service
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: diagnostic-agent-service
+  template:
+    metadata:
+      labels:
+        app: diagnostic-agent-service
+    spec:
+      containers:
+        - name: diagnostic-agent-service
+          image: aegishealthacr2026.azurecr.io/diagnostic-agent-service:latest
+          ports:
+            - containerPort: 5005
+          env:
+            - name: PORT
+              value: "5005"
+            - name: AZURE_AI_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: AZURE_AI_ENDPOINT
+            - name: AZURE_AI_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: AZURE_AI_KEY
+          readinessProbe:
+            httpGet: { path: /health, port: 5005 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "192Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: diagnostic-agent-service
+  namespace: aegis
+spec:
+  selector:
+    app: diagnostic-agent-service
+  ports:
+    - port: 5005
+      targetPort: 5005
+
+---
+# ─── Image Analysis Agent (port 8001) ─────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-analysis-agent
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: image-analysis-agent
+  template:
+    metadata:
+      labels:
+        app: image-analysis-agent
+    spec:
+      containers:
+        - name: image-analysis-agent
+          image: aegishealthacr2026.azurecr.io/image-analysis-agent:latest
+          ports:
+            - containerPort: 8001
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: MONGODB_URI
+          readinessProbe:
+            httpGet: { path: /health, port: 8001 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "192Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: image-analysis-agent
+  namespace: aegis
+spec:
+  selector:
+    app: image-analysis-agent
+  ports:
+    - port: 8001
+      targetPort: 8001
+
+---
+# ─── Patient History Agent (port 8002) ────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patient-history-agent
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: patient-history-agent
+  template:
+    metadata:
+      labels:
+        app: patient-history-agent
+    spec:
+      containers:
+        - name: patient-history-agent
+          image: aegishealthacr2026.azurecr.io/patient-history-agent:latest
+          ports:
+            - containerPort: 8002
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: MONGODB_URI
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: DATABASE_URL
+          readinessProbe:
+            httpGet: { path: /health, port: 8002 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "192Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patient-history-agent
+  namespace: aegis
+spec:
+  selector:
+    app: patient-history-agent
+  ports:
+    - port: 8002
+      targetPort: 8002
+
+---
+# ─── Coordinator Agent (port 8000) ────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator-agent
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coordinator-agent
+  template:
+    metadata:
+      labels:
+        app: coordinator-agent
+    spec:
+      containers:
+        - name: coordinator-agent
+          image: aegishealthacr2026.azurecr.io/coordinator-agent:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: AZURE_AI_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: AZURE_AI_ENDPOINT
+            - name: AZURE_AI_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: AZURE_AI_KEY
+            - name: IMAGE_ANALYSIS_AGENT_URL
+              value: "http://image-analysis-agent:8001"
+            - name: PATIENT_HISTORY_AGENT_URL
+              value: "http://patient-history-agent:8002"
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "192Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator-agent
+  namespace: aegis
+spec:
+  selector:
+    app: coordinator-agent
+  ports:
+    - port: 8000
+      targetPort: 8000
+
+---
+# ─── Notification Worker (background — no Service) ────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-worker
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-worker
+  template:
+    metadata:
+      labels:
+        app: notification-worker
+    spec:
+      containers:
+        - name: notification-worker
+          image: aegishealthacr2026.azurecr.io/notification-worker:latest
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: MONGODB_URI
+            - name: TZ
+              value: "Asia/Kolkata"
+          resources:
+            requests: { cpu: "50m", memory: "128Mi" }
+            limits:   { cpu: "200m", memory: "256Mi" }
+
+---
+# ─── API Gateway (port 5000 — ClusterIP, nginx proxies to it) ─────────────────
+# Service name MUST stay "api-gateway" — nginx.conf proxies /api/ → http://api-gateway:5000
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: aegishealthacr2026.azurecr.io/api-gateway:latest
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: aegis-config
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: MONGODB_URI
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-secrets
+                  key: JWT_SECRET
+          readinessProbe:
+            httpGet: { path: /healthz, port: 5000 }
+            initialDelaySeconds: 25
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "150m", memory: "192Mi" }
+            limits:   { cpu: "600m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: aegis
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - port: 5000
+      targetPort: 5000
+
+---
+# ─── React Frontend (LoadBalancer — the only public-facing service) ────────────
+# nginx proxies /api/* and /socket.io/* to api-gateway:5000 internally.
+# Single public IP on port 80 is all that's needed for the demo.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client
+  namespace: aegis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client
+  template:
+    metadata:
+      labels:
+        app: client
+    spec:
+      containers:
+        - name: client
+          image: aegishealthacr2026.azurecr.io/client:latest
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "200m", memory: "128Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: client-service
+  namespace: aegis
+spec:
+  type: LoadBalancer
+  selector:
+    app: client
+  ports:
+    - port: 80
+      targetPort: 80

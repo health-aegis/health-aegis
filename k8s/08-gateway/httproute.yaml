@@ -1,0 +1,48 @@
+# ─── KGateway — HTTPRoute ────────────────────────────────────────────────────
+# Routes traffic from the Gateway to backend services.
+# Rule order matters: more specific /api prefix is matched first.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: aegis-api-route
+  namespace: aegis
+spec:
+  parentRefs:
+    - name: aegis-gateway
+      namespace: aegis
+  rules:
+    # ── Route: /api/* → API Gateway ──────────────────────────────────────────
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: api-gateway-service
+          port: 5000
+          weight: 1
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: X-Served-By
+                value: aegis-api-gateway
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: aegis-frontend-route
+  namespace: aegis
+spec:
+  parentRefs:
+    - name: aegis-gateway
+      namespace: aegis
+  rules:
+    # ── Route: /* → React Frontend (catch-all) ────────────────────────────────
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: client-service
+          port: 80
+          weight: 1

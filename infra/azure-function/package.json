@@ -1,0 +1,15 @@
+{
+  "name": "health-record-processor",
+  "version": "1.0.0",
+  "description": "Azure Function for OCR processing of health records",
+  "main": "health-record-processor/index.js",
+  "scripts": {
+    "start": "func start",
+    "test": "echo \"No tests specified\""
+  },
+  "dependencies": {
+    "@azure/ai-form-recognizer": "^4.0.0",
+    "mongoose": "^6.13.0",
+    "@azure/communication-email": "^1.0.0"
+  }
+}

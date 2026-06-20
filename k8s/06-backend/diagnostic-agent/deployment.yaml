@@ -1,0 +1,82 @@
+# ─── Diagnostic Agent Deployment ─────────────────────────────────────────────
+# FastAPI AI Agent 2. Uses Azure AI Foundry for vision-based diagnostic analysis.
+# Azure AI credentials come from Key Vault.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: diagnostic-agent-service
+  namespace: aegis
+  labels:
+    app: diagnostic-agent-service
+    app.kubernetes.io/part-of: aegis-health
+    tier: fastapi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: diagnostic-agent-service
+  template:
+    metadata:
+      labels:
+        app: diagnostic-agent-service
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: aegis-workload-identity
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: aegis-kv-secret-provider
+      containers:
+        - name: diagnostic-agent-service
+          image: __ACR_NAME__.azurecr.io/diagnostic-agent-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5005
+              name: http
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          envFrom:
+            - secretRef:
+                name: aegis-kv-secrets
+            - configMapRef:
+                name: aegis-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5005
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5005
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: diagnostic-agent-service
+  namespace: aegis
+  labels:
+    app: diagnostic-agent-service
+spec:
+  selector:
+    app: diagnostic-agent-service
+  ports:
+    - port: 5005
+      targetPort: 5005
+      name: http
+  type: ClusterIP

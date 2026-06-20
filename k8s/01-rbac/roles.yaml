@@ -1,0 +1,24 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aegis-pod-reader
+  labels:
+    app: aegis
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aegis-pod-reader-binding
+  labels:
+    app: aegis
+subjects:
+  - kind: ServiceAccount
+    name: aegis-api-gateway
+roleRef:
+  kind: Role
+  name: aegis-pod-reader
+  apiGroup: rbac.authorization.k8s.io

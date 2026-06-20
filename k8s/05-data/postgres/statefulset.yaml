@@ -1,0 +1,96 @@
+# ─── PostgreSQL StatefulSet ───────────────────────────────────────────────────
+# In-cluster PostgreSQL for the imaging-service.
+# Password sourced from aegis-kv-secrets (synced from Azure Key Vault via CSI).
+#
+# FIX: Removed duplicate 'postgres-data' from pod volumes[] — volumeClaimTemplates
+# handles PVC creation automatically for StatefulSets. Also added initContainer
+# to trigger Key Vault secret sync before main container starts.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: aegis
+  labels:
+    app: postgres
+    app.kubernetes.io/part-of: aegis-health
+spec:
+  serviceName: postgres-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      serviceAccountName: aegis-workload-identity
+      # initContainer mounts the CSI volume first — this triggers creation of
+      # the 'aegis-kv-secrets' K8s Secret before the postgres container starts.
+      initContainers:
+        - name: secret-sync-init
+          image: busybox:1.36
+          command: ["sh", "-c", "echo 'Key Vault secrets synced'; ls /mnt/secrets-store"]
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: aegis-kv-secret-provider
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_DB
+              value: "imaging"
+            - name: POSTGRES_USER
+              value: "aegis"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aegis-kv-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "aegis", "-d", "imaging"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "aegis", "-d", "imaging"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+  # volumeClaimTemplates automatically creates the PVC — do NOT also declare
+  # 'postgres-data' in the pod volumes[] section above.
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: managed-premium
+        resources:
+          requests:
+            storage: 5Gi

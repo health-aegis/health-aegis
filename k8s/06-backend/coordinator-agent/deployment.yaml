@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator-agent
+  namespace: aegis
+  labels:
+    app: coordinator-agent
+    app.kubernetes.io/part-of: aegis-health
+    tier: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coordinator-agent
+  template:
+    metadata:
+      labels:
+        app: coordinator-agent
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: aegis-workload-identity
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: aegis-kv-secret-provider
+      containers:
+        - name: coordinator-agent
+          image: __ACR_NAME__.azurecr.io/coordinator-agent:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          envFrom:
+            - secretRef:
+                name: aegis-kv-secrets
+            - configMapRef:
+                name: aegis-config
+          env:
+            - name: IMAGE_ANALYSIS_AGENT_URL
+              value: "http://image-analysis-agent:8001"
+            - name: PATIENT_HISTORY_AGENT_URL
+              value: "http://patient-history-agent:8002"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 8
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator-agent
+  namespace: aegis
+  labels:
+    app: coordinator-agent
+spec:
+  selector:
+    app: coordinator-agent
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http
+  type: ClusterIP

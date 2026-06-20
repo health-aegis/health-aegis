@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-service
+  namespace: aegis
+  labels:
+    app: ai-service
+    app.kubernetes.io/part-of: aegis-health
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-service
+  template:
+    metadata:
+      labels:
+        app: ai-service
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: aegis-workload-identity
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: aegis-kv-secret-provider
+      containers:
+        - name: ai-service
+          image: __ACR_NAME__.azurecr.io/ai-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5003
+              name: http
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          envFrom:
+            - secretRef:
+                name: aegis-kv-secrets
+            - configMapRef:
+                name: aegis-config
+          env:
+            - name: PORT
+              value: "5003"
+          readinessProbe:
+            tcpSocket:
+              port: 5003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 5003
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "192Mi"
+            limits:
+              cpu: "600m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-service
+  namespace: aegis
+spec:
+  selector:
+    app: ai-service
+  ports:
+    - port: 5003
+      targetPort: 5003
+      name: http
+  type: ClusterIP

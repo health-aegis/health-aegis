@@ -1,0 +1,13 @@
+apiVersion: v2
+name: aegis-health
+description: Aegis Health — AI-powered healthcare microservices platform for AKS
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - healthcare
+  - microservices
+  - aks
+  - multi-agent
+maintainers:
+  - name: aegis-platform

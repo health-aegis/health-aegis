@@ -1,0 +1,56 @@
+# ─── Aegis Health — Azure App Service Multi-Container Deployment ───────────────
+# This file is used ONLY for Azure App Service (Docker Compose mode).
+# It references pre-built images from Azure Container Registry.
+# MongoDB is replaced by Cosmos DB for MongoDB (connection via MONGODB_URI env var).
+
+services:
+
+  # ── React Frontend (main entry point, port 80) ─────────────────────────────
+  client:
+    image: insurancecr.azurecr.io/aegis-client:latest
+    ports:
+      - "80:80"
+
+  # ── API Gateway (port 5000) ────────────────────────────────────────────────
+  api-gateway:
+    image: insurancecr.azurecr.io/aegis-api-gateway:latest
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: 5000
+      MONGODB_URI: ${MONGODB_URI}
+      JWT_SECRET: ${JWT_SECRET}
+
+  # ── Health Records Service (port 5001) ─────────────────────────────────────
+  health-records-service:
+    image: insurancecr.azurecr.io/aegis-health-records:latest
+    ports:
+      - "5001:5001"
+    environment:
+      PORT: 5001
+      MONGODB_URI: ${MONGODB_URI}
+
+  # ── Medication Service (port 5002) ─────────────────────────────────────────
+  medication-service:
+    image: insurancecr.azurecr.io/aegis-medication:latest
+    ports:
+      - "5002:5002"
+    environment:
+      PORT: 5002
+      MONGODB_URI: ${MONGODB_URI}
+
+  # ── AI Service (port 5003) ─────────────────────────────────────────────────
+  ai-service:
+    image: insurancecr.azurecr.io/aegis-ai:latest
+    ports:
+      - "5003:5003"
+    environment:
+      PORT: 5003
+      MONGODB_URI: ${MONGODB_URI}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+
+  # ── Notification Worker (background, no port) ─────────────────────────────
+  notification-worker:
+    image: insurancecr.azurecr.io/aegis-notification-worker:latest
+    environment:
+      MONGODB_URI: ${MONGODB_URI}

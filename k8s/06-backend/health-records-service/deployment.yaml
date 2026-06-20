@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-records-service
+  namespace: aegis
+  labels:
+    app: health-records-service
+    app.kubernetes.io/part-of: aegis-health
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: health-records-service
+  template:
+    metadata:
+      labels:
+        app: health-records-service
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: aegis-workload-identity
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: aegis-kv-secret-provider
+      containers:
+        - name: health-records-service
+          image: __ACR_NAME__.azurecr.io/health-records-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5001
+              name: http
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          envFrom:
+            - secretRef:
+                name: aegis-kv-secrets
+            - configMapRef:
+                name: aegis-config
+          env:
+            - name: PORT
+              value: "5001"
+          readinessProbe:
+            tcpSocket:
+              port: 5001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 5001
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "400m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: health-records-service
+  namespace: aegis
+spec:
+  selector:
+    app: health-records-service
+  ports:
+    - port: 5001
+      targetPort: 5001
+      name: http
+  type: ClusterIP

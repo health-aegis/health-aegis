@@ -1,0 +1,12 @@
+# ─── Non-secret application configuration ─────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aegis-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aegis.labels" . | nindent 4 }}
+data:
+{{- range $k, $v := .Values.config }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}

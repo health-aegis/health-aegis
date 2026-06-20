@@ -1,0 +1,93 @@
+# ─── Backend microservices ────────────────────────────────────────────────────
+# One Deployment (+ Service unless worker) per entry in .Values.services.
+{{- $root := . -}}
+{{- range .Values.services }}
+{{- $svcName := .serviceName | default .name }}
+{{- $resources := .resources | default $root.Values.backendDefaults.resources }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .name }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    app: {{ .name }}
+    {{- include "aegis.labels" $root | nindent 4 }}
+spec:
+  replicas: {{ .replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ .name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .name }}
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ $root.Values.workloadIdentity.serviceAccountName }}
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ $root.Values.secretProviderClassName }}
+      containers:
+        - name: {{ .name }}
+          image: {{ include "aegis.image" (dict "root" $root "repo" .image) }}
+          imagePullPolicy: {{ $root.Values.global.imagePullPolicy }}
+          {{- if not .worker }}
+          ports:
+            - containerPort: {{ .port }}
+              name: http
+          {{- end }}
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          {{- include "aegis.envFrom" $root | nindent 10 }}
+          {{- if .port }}
+          env:
+            - name: PORT
+              value: {{ .port | quote }}
+          {{- end }}
+          {{- if and (not .worker) .healthPath }}
+          readinessProbe:
+            httpGet:
+              path: {{ .healthPath }}
+              port: {{ .port }}
+            initialDelaySeconds: 10
+            periodSeconds: 8
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: {{ .healthPath }}
+              port: {{ .port }}
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          {{- end }}
+          resources:
+            {{- toYaml $resources | nindent 12 }}
+{{- if not .worker }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svcName }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    app: {{ .name }}
+    {{- include "aegis.labels" $root | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .name }}
+  ports:
+    - port: {{ .port }}
+      targetPort: {{ .port }}
+      name: http
+{{- end }}
+{{- end }}

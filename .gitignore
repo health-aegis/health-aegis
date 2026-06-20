@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Production
+dist/
+dist-ssr/
+build/
+
+# Docker
+.docker/
+
+# Environment Variables — NEVER commit secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Azure Function — settings files contain real keys/connection strings
+infra/azure-function/local.settings.json
+infra/azure-function/appsettings-full.json
+infra/azure-function/appsettings-patch.json
+infra/azure-function/settings.json
+infra/azure-function/set-package-url.ps1
+infra/azure-function/check-db.js
+
+# Build artifacts / zip files
+*.zip
+infra/azure-function/func_bin/
+helm_extracted/
+
+# Scratch / debug files
+mongo_uri.txt
+settings.json
+settings_content.json
+patch.yaml
+patch2.yaml
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.claude

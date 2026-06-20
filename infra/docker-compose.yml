@@ -1,0 +1,5 @@
+# This file has been moved to the project root.
+# See: ../docker-compose.yml
+#
+# Run from the project root:
+#   docker compose up --build

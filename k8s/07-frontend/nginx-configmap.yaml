@@ -1,0 +1,42 @@
+# ─── Client Nginx ConfigMap for K8s ─────────────────────────────────────────
+# In K8s, KGateway handles /api/* routing at the cluster edge.
+# The nginx inside the client pod serves ONLY static React files.
+# No API proxy needed — the browser sends /api/* requests to the Gateway IP
+# which KGateway routes to api-gateway-service:5000.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-nginx-config
+  namespace: aegis
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # ── React SPA fallback (client-side routing) ──────────────────────────
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # ── Static assets with caching ────────────────────────────────────────
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+            try_files $uri =404;
+        }
+
+        # ── Health check for K8s probes ───────────────────────────────────────
+        location /healthz {
+            access_log off;
+            return 200 "ok\n";
+            add_header Content-Type text/plain;
+        }
+
+        # ── Error pages ───────────────────────────────────────────────────────
+        error_page 500 502 503 504 /50x.html;
+        location = /50x.html { root /usr/share/nginx/html; }
+    }
