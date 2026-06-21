@@ -17,6 +17,9 @@ spec:
     - from:
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: api-gateway
+        - podSelector:
+            matchLabels:
               app.kubernetes.io/name: coordinator-agent
       ports:
         - protocol: TCP
