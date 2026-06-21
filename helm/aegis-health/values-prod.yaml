@@ -1,0 +1,13 @@
+global:
+  acrLoginServer: aegisprodacr.azurecr.io
+  imageTag: latest
+
+namespace:
+  name: aegis-prod
+
+workloadIdentity:
+  clientId: ""  # set after prod terraform apply
+
+keyVault:
+  name: aegis-kv-prod
+  tenantId: "3076b773-f5d9-413e-9564-7deaa3d0d7b7"

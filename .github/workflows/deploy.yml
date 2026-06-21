@@ -142,92 +142,34 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
-      # ── Detect which services changed ───────────────────────────────────────
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            api-gateway:
-              - 'services/api-gateway/**'
-              - 'shared/**'
-            health-records-service:
-              - 'services/health-records-service/**'
-            medication-service:
-              - 'services/medication-service/**'
-            ai-service:
-              - 'services/ai-service/**'
-            notification-worker:
-              - 'services/notification-worker/**'
-            imaging-service:
-              - 'services/imaging-service/**'
-            diagnostic-agent:
-              - 'services/diagnostic-agent-service/**'
-            coordinator-agent:
-              - 'services/coordinator-agent/**'
-            image-analysis-agent:
-              - 'services/image-analysis-agent/**'
-            patient-history-agent:
-              - 'services/patient-history-agent/**'
-            client:
-              - 'client/**'
-
-      # ── Patch kustomize image tags ──────────────────────────────────────────
-      # kustomize edit set image replaces newName + newTag in the overlay's
-      # images: section, keeping the base deployment.yaml untouched.
-      - name: Update image tags in kustomize overlay
+      # ── Patch Helm values image tag ─────────────────────────────────────────
+      # Updates global.imageTag in the env-specific values file.
+      # ArgoCD detects the commit and syncs the Helm release automatically.
+      - name: Update image tag in Helm values
         run: |
-          OVERLAY="${{ needs.resolve-env.outputs.overlay }}"
+          ENV="${{ needs.resolve-env.outputs.env }}"
           TAG="${{ needs.resolve-env.outputs.tag }}"
-          ACR="${{ secrets.ACR_NAME }}.azurecr.io"
-          UPDATED=()
+          VALUES="helm/aegis-health/values-${ENV}.yaml"
 
-          cd "${OVERLAY}"
-
-          update() {
-            local svc="$1"
-            kustomize edit set image "${svc}=${ACR}/${svc}:${TAG}"
-            UPDATED+=("${svc}")
-            echo "→ ${svc}=${ACR}/${svc}:${TAG}"
-          }
-
-          [[ "${{ steps.filter.outputs.api-gateway }}"           == "true" ]] && update api-gateway
-          [[ "${{ steps.filter.outputs.health-records-service }}" == "true" ]] && update health-records-service
-          [[ "${{ steps.filter.outputs.medication-service }}"    == "true" ]] && update medication-service
-          [[ "${{ steps.filter.outputs.ai-service }}"            == "true" ]] && update ai-service
-          [[ "${{ steps.filter.outputs.notification-worker }}"   == "true" ]] && update notification-worker
-          [[ "${{ steps.filter.outputs.imaging-service }}"       == "true" ]] && update imaging-service
-          [[ "${{ steps.filter.outputs.diagnostic-agent }}"      == "true" ]] && update diagnostic-agent
-          [[ "${{ steps.filter.outputs.coordinator-agent }}"     == "true" ]] && update coordinator-agent
-          [[ "${{ steps.filter.outputs.image-analysis-agent }}"  == "true" ]] && update image-analysis-agent
-          [[ "${{ steps.filter.outputs.patient-history-agent }}" == "true" ]] && update patient-history-agent
-          [[ "${{ steps.filter.outputs.client }}"                == "true" ]] && update client
-
-          if [ ${#UPDATED[@]} -eq 0 ]; then
-            echo "No services changed — nothing to deploy."
-            echo "NOTHING_TO_DEPLOY=true" >> "$GITHUB_ENV"
-          else
-            echo "Updated: ${UPDATED[*]}"
-            printf '%s\n' "${UPDATED[@]}" > /tmp/updated-services.txt
-          fi
+          sed -i "s/^  imageTag:.*/  imageTag: ${TAG}/" "${VALUES}"
+          echo "→ ${VALUES}: imageTag=${TAG}"
 
       # ── Commit the tag bump back to the repo ────────────────────────────────
       - name: Commit manifest changes
-        if: env.NOTHING_TO_DEPLOY != 'true'
         run: |
-          OVERLAY="${{ needs.resolve-env.outputs.overlay }}"
-          TAG="${{ needs.resolve-env.outputs.tag }}"
           ENV="${{ needs.resolve-env.outputs.env }}"
+          TAG="${{ needs.resolve-env.outputs.tag }}"
           BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
 
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add "${OVERLAY}/kustomization.yaml"
+          git add "helm/aegis-health/values-${ENV}.yaml"
 
           if git diff --cached --quiet; then
             echo "No manifest changes to commit."
           else
-            git commit -m "chore(deploy): bump ${ENV} image tags to ${TAG} [${BRANCH}] [skip ci]"
+            git commit -m "chore(deploy): bump ${ENV} imageTag to ${TAG} [${BRANCH}] [skip ci]"
             git pull --rebase origin HEAD
             git push
           fi
@@ -244,11 +186,6 @@ jobs:
             echo "| **Tag** | \`${{ needs.resolve-env.outputs.tag }}\` |"
             echo "| **Namespace** | \`${{ needs.resolve-env.outputs.namespace }}\` |"
             echo "| **Actor** | \`${{ github.actor }}\` |"
-            if [ -f /tmp/updated-services.txt ]; then
-              echo ""
-              echo "### Updated"
-              while IFS= read -r s; do echo "- \`$s\`"; done < /tmp/updated-services.txt
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
 # ─────────────────────────────────────────────────────────────────────────────

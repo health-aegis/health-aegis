@@ -1,0 +1,13 @@
+global:
+  acrLoginServer: aegistestacr.azurecr.io
+  imageTag: latest
+
+namespace:
+  name: aegis-dev
+
+workloadIdentity:
+  clientId: "ccd4d517-3358-48d2-9e99-75e3d8d0bec7"
+
+keyVault:
+  name: aegis-kv-test
+  tenantId: "3076b773-f5d9-413e-9564-7deaa3d0d7b7"

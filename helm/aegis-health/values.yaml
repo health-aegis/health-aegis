@@ -175,6 +175,13 @@ frontend:
     requests: { cpu: "20m", memory: "64Mi" }
     limits: { cpu: "100m", memory: "128Mi" }
 
+# ─── AGIC Ingress (Application Gateway Ingress Controller) ───────────────────
+ingress:
+  enabled: true
+  apiBackend:
+    name: api-gateway-service
+    port: 5000
+
 # ─── KGateway (Gateway API) ───────────────────────────────────────────────────
 gateway:
   enabled: false

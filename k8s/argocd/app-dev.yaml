@@ -8,7 +8,11 @@ spec:
   source:
     repoURL: https://github.com/health-aegis/health-aegis.git
     targetRevision: develop
-    path: k8s/dev
+    path: helm/aegis-health
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-dev.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: aegis-dev
