@@ -99,6 +99,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   # to AAD users/groups/service principals without maintaining local RBAC.
   # Required to get kube_admin_config populated.
   azure_active_directory_role_based_access_control {
+    managed            = true
     azure_rbac_enabled = true
   }
 
