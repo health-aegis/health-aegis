@@ -277,8 +277,10 @@ def analyze_image(req: DiagnosticRequest):
         )
         return {"status": "success", "mode": "live", "report": response.choices[0].message.content}
     except Exception as e:
-        print(f"Error during analysis: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"⚠️ Live analysis failed: {e}. Falling back to simulation mode.")
+        ctx = _parse_context(req.patient_context)
+        report = _generate_mock_report(filename, ctx)
+        return {"status": "success", "mode": "simulation", "report": report}
 
 @app.get("/health")
 def health_check():
