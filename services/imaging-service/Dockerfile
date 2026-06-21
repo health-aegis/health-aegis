@@ -1,4 +1,4 @@
-# imaging-service
+# imaging-service — multistage, non-root
 FROM python:3.11-slim AS builder
 WORKDIR /app
 COPY requirements.txt .
