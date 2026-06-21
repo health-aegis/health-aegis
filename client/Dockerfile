@@ -18,7 +18,7 @@ COPY client/src/ ./src/
 
 RUN npm run build
 
-# ── Nginx static server stage ──────────────────────────────────────────
+# ── Nginx static server stage ──────────────────────────────────────────----
 FROM nginx:alpine
 
 COPY client/nginx.conf /etc/nginx/conf.d/default.conf
