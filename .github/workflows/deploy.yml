@@ -136,7 +136,7 @@ jobs:
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
 
     permissions:
-      contents: write
+      contents: read
 
     steps:
       # ── Checkout health-aegis at the triggering commit ───────────────────────
@@ -174,10 +174,18 @@ jobs:
             client:
               - 'client/**'
 
-      # ── Patch imageTags.<service> in helm/aegis-health/values-<env>.yaml ─────
-      # ArgoCD watches THIS repo (health-aegis) at helm/aegis-health/, so
-      # patching values-dev.yaml here is what actually triggers a rollout.
-      - name: Patch image tags in helm/aegis-health/values-<env>.yaml
+      # ── Checkout k8s-manifests (GitOps repo) ────────────────────────────────
+      # ArgoCD watches k8s-manifests/environments/dev — the umbrella chart.
+      # Patching <subchart>.image.tag here is what actually triggers a rollout.
+      - name: Checkout k8s-manifests
+        uses: actions/checkout@v4
+        with:
+          repository: health-aegis/k8s-manifests
+          token:      ${{ secrets.GITOPS_PAT }}
+          path:       k8s-manifests
+
+      # ── Patch <subchart>.image.tag in environments/<env>/values.yaml ─────────
+      - name: Patch image tags in k8s-manifests
         env:
           TAG:                        ${{ needs.resolve-env.outputs.tag }}
           ENV:                        ${{ needs.resolve-env.outputs.env }}
@@ -193,13 +201,16 @@ jobs:
           CHANGED_patient_history:    ${{ steps.filter.outputs.patient-history-agent }}
           CHANGED_client:             ${{ steps.filter.outputs.client }}
         run: |
-          VALUES="helm/aegis-health/values-${ENV}.yaml"
+          VALUES="k8s-manifests/environments/${ENV}/values.yaml"
+          if [ ! -f "$VALUES" ]; then
+            echo "⚠ ${VALUES} not found — nothing to patch"; exit 0
+          fi
 
           patch_tag() {
             local SVC="$1" CHANGED="$2"
             [ "$CHANGED" != "true" ] && return
-            sed -i "s|^  ${SVC}: \".*\"|  ${SVC}: \"${TAG}\"|" "$VALUES"
-            echo "  ✓ ${SVC} → ${TAG}"
+            yq -i ".\"${SVC}\".image.tag = \"${TAG}\"" "${VALUES}"
+            echo "  ✓ ${SVC}.image.tag → ${TAG}"
           }
 
           patch_tag api-gateway              "$CHANGED_api_gateway"
@@ -214,8 +225,9 @@ jobs:
           patch_tag patient-history-agent    "$CHANGED_patient_history"
           patch_tag client                   "$CHANGED_client"
 
-      # ── Commit and push to health-aegis ─────────────────────────────────────
-      - name: Commit image tag bump
+      # ── Commit and push to k8s-manifests ────────────────────────────────────
+      - name: Commit image tag bump to k8s-manifests
+        working-directory: k8s-manifests
         env:
           ENV:    ${{ needs.resolve-env.outputs.env }}
           TAG:    ${{ needs.resolve-env.outputs.tag }}
@@ -224,15 +236,15 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add helm/aegis-health/values-${ENV}.yaml
+          git add environments/
           git diff --cached --quiet \
             && echo "No image tag changes to commit." \
             && exit 0
 
           git commit -m "chore(deploy): bump ${ENV} image tags to ${TAG} [${BRANCH}] [skip ci]"
-          git fetch origin "${BRANCH}"
-          git rebase "origin/${BRANCH}"
-          git push origin "HEAD:${BRANCH}"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
 
       # ── Step summary ─────────────────────────────────────────────────────────
       - name: Write deploy summary
