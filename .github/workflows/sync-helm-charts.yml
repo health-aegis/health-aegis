@@ -1,0 +1,98 @@
+# ---------------------------------------------------------------------------
+# Aegis Health — Helm Chart Sync
+#
+# Syncs chart templates, Chart.yaml, and values.yaml from this repo's
+# helm/charts/<service>/ into health-aegis/k8s-manifests/charts/<service>/
+# whenever those files change on main or develop.
+#
+# values-dev.yaml and values-prod.yaml in k8s-manifests are managed by
+# deploy.yml (image tag bumps) and are NOT overwritten here.
+#
+# Required secrets:
+#   GITOPS_PAT — PAT with repo write scope on health-aegis/k8s-manifests
+# ---------------------------------------------------------------------------
+
+name: Sync Helm Charts
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'helm/charts/**'
+
+concurrency:
+  group: sync-charts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: "Sync chart templates → k8s-manifests"
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout health-aegis
+        uses: actions/checkout@v4
+
+      - name: Checkout k8s-manifests
+        uses: actions/checkout@v4
+        with:
+          repository: health-aegis/k8s-manifests
+          token:      ${{ secrets.GITOPS_PAT }}
+          path:       k8s-manifests
+
+      - name: Sync chart templates
+        run: |
+          SERVICES=(
+            api-gateway
+            health-records-service
+            medication-service
+            ai-service
+            notification-worker
+            imaging-service
+            diagnostic-agent-service
+            coordinator-agent
+            image-analysis-agent
+            patient-history-agent
+            client
+          )
+
+          for SVC in "${SERVICES[@]}"; do
+            SRC="helm/charts/${SVC}"
+            DST="k8s-manifests/charts/${SVC}"
+
+            if [ ! -d "$SRC" ] || [ ! -d "$DST" ]; then
+              continue
+            fi
+
+            # Sync templates (Deployments, Services, NetworkPolicies, HPAs …)
+            rsync -a --delete "${SRC}/templates/" "${DST}/templates/"
+
+            # Sync Chart.yaml and base values.yaml
+            # values-dev.yaml / values-prod.yaml are owned by deploy.yml — skip them
+            cp "${SRC}/Chart.yaml" "${DST}/Chart.yaml"
+            cp "${SRC}/values.yaml" "${DST}/values.yaml"
+
+            echo "  ✓ synced ${SVC}"
+          done
+
+      - name: Commit and push to k8s-manifests
+        working-directory: k8s-manifests
+        env:
+          BRANCH: ${{ github.ref_name }}
+          SHA:    ${{ github.sha }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add charts/
+          git diff --cached --quiet \
+            && echo "No chart template changes to sync." \
+            && exit 0
+
+          git commit -m "chore(charts): sync Helm templates from health-aegis [${BRANCH}] [skip ci]"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
