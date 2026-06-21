@@ -17,11 +17,10 @@
 #   develop → dev  → k8s/dev  overlay → namespace aegis-dev
 #   main    → prod → k8s/prod overlay → namespace aegis-prod
 #
-# Required secrets:
+# Required secrets (set in health-aegis repo → Settings → Secrets → Actions):
 #   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  — OIDC
-#   ACR_NAME            — registry name without .azurecr.io (test or prod ACR)
-#   AKS_CLUSTER_NAME    — cluster name
-#   AKS_RESOURCE_GROUP  — resource group
+#   ACR_NAME            — registry name without .azurecr.io (e.g. aegistestacr)
+#   GITOPS_PAT          — PAT with repo write on health-aegis/k8s-manifests
 #   SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO
 # ---------------------------------------------------------------------------
 
@@ -118,11 +117,16 @@ jobs:
         run: echo "✅ Production deployment approved — proceeding."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 3 — UPDATE MANIFEST + APPLY
-# Detects changed services, patches kustomize image tags, commits, then applies
+# JOB 3 — UPDATE MANIFEST
+# Detects which services changed, then patches each service's individual
+# values-dev.yaml / values-prod.yaml image.tag in k8s-manifests.
+# ArgoCD watches k8s-manifests and syncs the cluster automatically.
+#
+# Requires secret GITOPS_PAT — a PAT with repo write scope on
+# health-aegis/k8s-manifests (same PAT used by terraform-aegis).
 # ─────────────────────────────────────────────────────────────────────────────
   update-manifest:
-    name: "CD – Update manifests & deploy (${{ needs.resolve-env.outputs.env }})"
+    name: "CD – Update manifests (${{ needs.resolve-env.outputs.env }})"
     runs-on: ubuntu-latest
     needs: [resolve-env, await-approval]
 
@@ -132,17 +136,17 @@ jobs:
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
 
     permissions:
-      contents: write
-      id-token: write
+      contents: read
 
     steps:
+      # ── Checkout health-aegis at the triggering commit (read-only) ───────────
+      # Needed so paths-filter can detect which services changed.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref:        ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
-          token: ${{ github.token }}
 
-      # ── Detect which services changed ───────────────────────────────────────
+      # ── Detect which services changed in the triggering build ────────────────
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -160,7 +164,7 @@ jobs:
               - 'services/notification-worker/**'
             imaging-service:
               - 'services/imaging-service/**'
-            diagnostic-agent:
+            diagnostic-agent-service:
               - 'services/diagnostic-agent-service/**'
             coordinator-agent:
               - 'services/coordinator-agent/**'
@@ -171,129 +175,74 @@ jobs:
             client:
               - 'client/**'
 
-      # ── Patch kustomize image tags ──────────────────────────────────────────
-      # kustomize edit set image replaces newName + newTag in the overlay's
-      # images: section, keeping the base deployment.yaml untouched.
-      - name: Update image tags in kustomize overlay
+      # ── Checkout k8s-manifests (GitOps repo) ────────────────────────────────
+      - name: Checkout k8s-manifests
+        uses: actions/checkout@v4
+        with:
+          repository: health-aegis/k8s-manifests
+          token:      ${{ secrets.GITOPS_PAT }}
+          path:       k8s-manifests
+
+      # ── Patch image.tag for each changed service ─────────────────────────────
+      - name: Patch image tags in k8s-manifests
+        env:
+          TAG:                        ${{ needs.resolve-env.outputs.tag }}
+          ENV:                        ${{ needs.resolve-env.outputs.env }}
+          CHANGED_api_gateway:        ${{ steps.filter.outputs.api-gateway }}
+          CHANGED_health_records:     ${{ steps.filter.outputs.health-records-service }}
+          CHANGED_medication:         ${{ steps.filter.outputs.medication-service }}
+          CHANGED_ai:                 ${{ steps.filter.outputs.ai-service }}
+          CHANGED_notification:       ${{ steps.filter.outputs.notification-worker }}
+          CHANGED_imaging:            ${{ steps.filter.outputs.imaging-service }}
+          CHANGED_diagnostic:         ${{ steps.filter.outputs.diagnostic-agent-service }}
+          CHANGED_coordinator:        ${{ steps.filter.outputs.coordinator-agent }}
+          CHANGED_image_analysis:     ${{ steps.filter.outputs.image-analysis-agent }}
+          CHANGED_patient_history:    ${{ steps.filter.outputs.patient-history-agent }}
+          CHANGED_client:             ${{ steps.filter.outputs.client }}
         run: |
-          OVERLAY="${{ needs.resolve-env.outputs.overlay }}"
-          TAG="${{ needs.resolve-env.outputs.tag }}"
-          ACR="${{ secrets.ACR_NAME }}.azurecr.io"
-          UPDATED=()
-
-          cd "${OVERLAY}"
-
-          update() {
-            local svc="$1"
-            kustomize edit set image "${svc}=${ACR}/${svc}:${TAG}"
-            UPDATED+=("${svc}")
-            echo "→ ${svc}=${ACR}/${svc}:${TAG}"
+          patch_tag() {
+            local SVC="$1" CHART="$2" CHANGED="$3"
+            [ "$CHANGED" != "true" ] && return
+            local VALUES="k8s-manifests/charts/${CHART}/values-${ENV}.yaml"
+            if [ ! -f "$VALUES" ]; then
+              echo "⚠ ${VALUES} not found — skipping ${SVC}"; return
+            fi
+            sed -i "s/^  tag: \".*\"/  tag: \"${TAG}\"/" "$VALUES"
+            echo "  ✓ ${CHART}/values-${ENV}.yaml → tag=${TAG}"
           }
 
-          [[ "${{ steps.filter.outputs.api-gateway }}"           == "true" ]] && update api-gateway
-          [[ "${{ steps.filter.outputs.health-records-service }}" == "true" ]] && update health-records-service
-          [[ "${{ steps.filter.outputs.medication-service }}"    == "true" ]] && update medication-service
-          [[ "${{ steps.filter.outputs.ai-service }}"            == "true" ]] && update ai-service
-          [[ "${{ steps.filter.outputs.notification-worker }}"   == "true" ]] && update notification-worker
-          [[ "${{ steps.filter.outputs.imaging-service }}"       == "true" ]] && update imaging-service
-          [[ "${{ steps.filter.outputs.diagnostic-agent }}"      == "true" ]] && update diagnostic-agent
-          [[ "${{ steps.filter.outputs.coordinator-agent }}"     == "true" ]] && update coordinator-agent
-          [[ "${{ steps.filter.outputs.image-analysis-agent }}"  == "true" ]] && update image-analysis-agent
-          [[ "${{ steps.filter.outputs.patient-history-agent }}" == "true" ]] && update patient-history-agent
-          [[ "${{ steps.filter.outputs.client }}"                == "true" ]] && update client
+          patch_tag api-gateway              api-gateway              "$CHANGED_api_gateway"
+          patch_tag health-records-service   health-records-service   "$CHANGED_health_records"
+          patch_tag medication-service       medication-service       "$CHANGED_medication"
+          patch_tag ai-service               ai-service               "$CHANGED_ai"
+          patch_tag notification-worker      notification-worker      "$CHANGED_notification"
+          patch_tag imaging-service          imaging-service          "$CHANGED_imaging"
+          patch_tag diagnostic-agent-service diagnostic-agent-service "$CHANGED_diagnostic"
+          patch_tag coordinator-agent        coordinator-agent        "$CHANGED_coordinator"
+          patch_tag image-analysis-agent     image-analysis-agent     "$CHANGED_image_analysis"
+          patch_tag patient-history-agent    patient-history-agent    "$CHANGED_patient_history"
+          patch_tag client                   client                   "$CHANGED_client"
 
-          if [ ${#UPDATED[@]} -eq 0 ]; then
-            echo "No services changed — nothing to deploy."
-            echo "NOTHING_TO_DEPLOY=true" >> "$GITHUB_ENV"
-          else
-            echo "Updated: ${UPDATED[*]}"
-            printf '%s\n' "${UPDATED[@]}" > /tmp/updated-services.txt
-          fi
-
-      # ── Commit the tag bump back to the repo ────────────────────────────────
-      - name: Commit manifest changes
-        if: env.NOTHING_TO_DEPLOY != 'true'
+      # ── Commit and push to k8s-manifests ────────────────────────────────────
+      - name: Commit image tag bump to k8s-manifests
+        working-directory: k8s-manifests
+        env:
+          ENV:    ${{ needs.resolve-env.outputs.env }}
+          TAG:    ${{ needs.resolve-env.outputs.tag }}
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
         run: |
-          OVERLAY="${{ needs.resolve-env.outputs.overlay }}"
-          TAG="${{ needs.resolve-env.outputs.tag }}"
-          ENV="${{ needs.resolve-env.outputs.env }}"
-          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
-
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add "${OVERLAY}/kustomization.yaml"
+          git add charts/
+          git diff --cached --quiet \
+            && echo "No image tag changes to commit." \
+            && exit 0
 
-          if git diff --cached --quiet; then
-            echo "No manifest changes to commit."
-          else
-            git commit -m "chore(deploy): bump ${ENV} image tags to ${TAG} [${BRANCH}] [skip ci]"
-            git pull --rebase origin HEAD
-            git push
-          fi
-
-      # ── Azure Login + AKS credentials ───────────────────────────────────────
-      - name: Azure Login (OIDC)
-        if: env.NOTHING_TO_DEPLOY != 'true'
-        uses: azure/login@v2
-        with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Get AKS credentials
-        if: env.NOTHING_TO_DEPLOY != 'true'
-        uses: azure/aks-set-context@v4
-        with:
-          resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
-          cluster-name:   ${{ secrets.AKS_CLUSTER_NAME }}
-
-      # ── Apply manifests to AKS ───────────────────────────────────────────────
-      - name: kubectl apply
-        if: env.NOTHING_TO_DEPLOY != 'true'
-        run: kubectl apply -k ${{ needs.resolve-env.outputs.overlay }}
-
-      # ── Rollout status ───────────────────────────────────────────────────────
-      - name: Verify rollout status
-        if: env.NOTHING_TO_DEPLOY != 'true'
-        run: |
-          NS="${{ needs.resolve-env.outputs.namespace }}"
-          FAILED=()
-
-          while IFS= read -r svc; do
-            echo "⏳ $svc"
-            if kubectl rollout status "deployment/$svc" -n "$NS" --timeout=5m; then
-              echo "✅ $svc ready"
-            else
-              echo "❌ $svc failed"
-              FAILED+=("$svc")
-            fi
-          done < /tmp/updated-services.txt
-
-          if [ ${#FAILED[@]} -gt 0 ]; then
-            kubectl get pods -n "$NS" --sort-by=.status.startTime
-            exit 1
-          fi
-
-      # ── Smoke test ───────────────────────────────────────────────────────────
-      - name: Smoke test — api-gateway /healthz
-        if: env.NOTHING_TO_DEPLOY != 'true'
-        run: |
-          NS="${{ needs.resolve-env.outputs.namespace }}"
-          grep -qx "api-gateway" /tmp/updated-services.txt 2>/dev/null || { echo "api-gateway not updated — skip"; exit 0; }
-
-          kubectl port-forward deployment/api-gateway 15000:5000 -n "$NS" &
-          PF_PID=$!
-          trap "kill $PF_PID 2>/dev/null" EXIT
-          sleep 5
-
-          for i in 1 2 3; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:15000/healthz)
-            [ "$CODE" = "200" ] && { echo "✅ /healthz → 200"; exit 0; }
-            echo "Attempt $i: $CODE — retrying"
-            sleep 5
-          done
-          echo "❌ Smoke test failed"; exit 1
+          git commit -m "chore(deploy): bump ${ENV} image tags to ${TAG} [${BRANCH}] [skip ci]"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
 
       # ── Step summary ─────────────────────────────────────────────────────────
       - name: Write deploy summary
@@ -307,11 +256,6 @@ jobs:
             echo "| **Tag** | \`${{ needs.resolve-env.outputs.tag }}\` |"
             echo "| **Namespace** | \`${{ needs.resolve-env.outputs.namespace }}\` |"
             echo "| **Actor** | \`${{ github.actor }}\` |"
-            if [ -f /tmp/updated-services.txt ]; then
-              echo ""
-              echo "### Updated"
-              while IFS= read -r s; do echo "- \`$s\`"; done < /tmp/updated-services.txt
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
 # ─────────────────────────────────────────────────────────────────────────────
