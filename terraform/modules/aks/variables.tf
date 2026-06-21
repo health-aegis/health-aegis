@@ -66,6 +66,11 @@ variable "app_gateway_id" {
   type        = string
 }
 
+variable "resource_group_id" {
+  description = "Resource ID of the resource group — used to scope the AGIC Reader role assignment"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags to apply to AKS resources"
   type        = map(string)

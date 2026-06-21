@@ -12,7 +12,7 @@ spec:
   source:
     repoURL: https://github.com/health-aegis/k8s-manifests.git
     targetRevision: HEAD
-    path: helm/environments/dev
+    path: environments/dev
   destination:
     server: https://kubernetes.default.svc
     namespace: aegis-dev

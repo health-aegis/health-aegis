@@ -112,6 +112,30 @@ resource "azurerm_kubernetes_cluster" "this" {
   tags = var.tags
 }
 
+# ---------------------------------------------------------------------------
+# AGIC role assignments
+#
+# The AGIC addon creates its own managed identity. AKS does NOT automatically
+# grant it access to the Application Gateway — that causes the crash-loop you
+# see immediately after cluster creation. These two assignments fix it:
+#
+#   Reader on the resource group   — lets AGIC list resources in the RG
+#   Contributor on the App Gateway — lets AGIC read and update routing rules
+#
+# Without these, AGIC restarts every ~30 s with ErrorApplicationGatewayForbidden.
+# ---------------------------------------------------------------------------
+resource "azurerm_role_assignment" "agic_rg_reader" {
+  scope                = var.resource_group_id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_kubernetes_cluster.this.ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
+}
+
+resource "azurerm_role_assignment" "agic_appgw_contributor" {
+  scope                = var.app_gateway_id
+  role_definition_name = "Contributor"
+  principal_id         = azurerm_kubernetes_cluster.this.ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
+}
+
 # User node pool — runs application workloads (keeps kube-system isolated on system pool).
 # Taints on the system pool (CriticalAddonsOnly) ensure user workloads land here.
 resource "azurerm_kubernetes_cluster_node_pool" "user" {

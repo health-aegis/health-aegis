@@ -130,6 +130,7 @@ module "aks" {
   source                     = "./modules/aks"
   cluster_name               = "${local.prefix}-aks"
   resource_group_name        = module.resource_group.name
+  resource_group_id          = module.resource_group.id
   location                   = module.resource_group.location
   node_resource_group        = local.node_resource_group
   kubernetes_version         = var.kubernetes_version

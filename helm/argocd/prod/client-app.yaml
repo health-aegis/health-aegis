@@ -13,7 +13,7 @@ spec:
   source:
     repoURL: https://github.com/health-aegis/k8s-manifests.git
     targetRevision: HEAD
-    path: helm/charts/client
+    path: charts/client
     helm:
       valueFiles:
         - values.yaml

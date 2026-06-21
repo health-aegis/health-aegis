@@ -13,7 +13,7 @@ spec:
   source:
     repoURL: https://github.com/health-aegis/k8s-manifests.git
     targetRevision: HEAD
-    path: helm/charts/notification-worker
+    path: charts/notification-worker
     helm:
       valueFiles:
         - values.yaml
