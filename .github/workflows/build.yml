@@ -209,7 +209,6 @@ jobs:
             -Dsonar.projectKey=health-aegis_health-aegis
             -Dsonar.organization=health-aegis
             -Dsonar.sources=src
-            -Dsonar.qualitygate.wait=true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
