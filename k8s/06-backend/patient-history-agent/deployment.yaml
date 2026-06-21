@@ -28,7 +28,7 @@ spec:
               secretProviderClass: aegis-kv-secret-provider
       containers:
         - name: patient-history-agent
-          image: __ACR_NAME__.azurecr.io/patient-history-agent:latest
+          image: patient-history-agent:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8002

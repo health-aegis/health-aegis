@@ -25,7 +25,7 @@ spec:
             name: client-nginx-config
       containers:
         - name: client
-          image: __ACR_NAME__.azurecr.io/client:latest
+          image: client:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 80

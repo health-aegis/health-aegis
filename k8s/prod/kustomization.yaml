@@ -13,3 +13,40 @@ patches:
     target:
       kind: Deployment
       name: api-gateway
+
+# Image registry for prod environment (aegisprodacr).
+# Tags are updated by the CD pipeline via: kustomize edit set image <name>=<acr>/<name>:<sha-tag>
+images:
+  - name: api-gateway
+    newName: aegisprodacr.azurecr.io/api-gateway
+    newTag: latest
+  - name: health-records-service
+    newName: aegisprodacr.azurecr.io/health-records-service
+    newTag: latest
+  - name: medication-service
+    newName: aegisprodacr.azurecr.io/medication-service
+    newTag: latest
+  - name: ai-service
+    newName: aegisprodacr.azurecr.io/ai-service
+    newTag: latest
+  - name: notification-worker
+    newName: aegisprodacr.azurecr.io/notification-worker
+    newTag: latest
+  - name: imaging-service
+    newName: aegisprodacr.azurecr.io/imaging-service
+    newTag: latest
+  - name: diagnostic-agent
+    newName: aegisprodacr.azurecr.io/diagnostic-agent
+    newTag: latest
+  - name: coordinator-agent
+    newName: aegisprodacr.azurecr.io/coordinator-agent
+    newTag: latest
+  - name: image-analysis-agent
+    newName: aegisprodacr.azurecr.io/image-analysis-agent
+    newTag: latest
+  - name: patient-history-agent
+    newName: aegisprodacr.azurecr.io/patient-history-agent
+    newTag: latest
+  - name: client
+    newName: aegisprodacr.azurecr.io/client
+    newTag: latest

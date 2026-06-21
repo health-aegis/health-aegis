@@ -28,7 +28,7 @@ spec:
               secretProviderClass: aegis-kv-secret-provider
       containers:
         - name: coordinator-agent
-          image: __ACR_NAME__.azurecr.io/coordinator-agent:latest
+          image: coordinator-agent:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000

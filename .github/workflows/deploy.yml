@@ -1,40 +1,38 @@
 # ---------------------------------------------------------------------------
 # Aegis Health — Deploy Pipeline
 #
-# Triggered automatically when Build completes successfully on main.
-# Can also be dispatched manually for targeted re-deploys or hotfixes.
+# JOB GRAPH:
 #
-# Flow:
-#   1. Re-detect which services changed in the build commit
-#   2. Authenticate to Azure (OIDC) and pull AKS credentials
-#   3. kubectl set image — stamps the sha-tag onto each changed Deployment
-#   4. kubectl rollout status — blocks until pods are Ready or times out
-#   5. Smoke test — port-forward api-gateway and assert /healthz returns 200
-#   6. Notify — email on success or failure
+#   resolve-env ──► await-approval (prod only) ──► update-manifest ──► notify
+#
+# • resolve-env      — determines environment (dev/prod) and image tag from the
+#                      build trigger; only proceeds when Build succeeded
+# • await-approval   — pauses for a human reviewer BEFORE prod deploys
+#                      (Settings → Environments → production → Required reviewers)
+# • update-manifest  — runs kustomize edit set image for every changed service,
+#                      commits the tag bump back to the repo, then kubectl apply
+# • notify           — email on ALL outcomes (always)
+#
+# Environments:
+#   develop → dev  → k8s/dev  overlay → namespace aegis-dev
+#   main    → prod → k8s/prod overlay → namespace aegis-prod
 #
 # Required secrets:
-#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  — OIDC auth
-#   ACR_NAME            — registry name (without .azurecr.io)
-#   AKS_CLUSTER_NAME    — cluster name (from Terraform output)
-#   AKS_RESOURCE_GROUP  — resource group containing the cluster
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  — OIDC
+#   ACR_NAME            — registry name without .azurecr.io (test or prod ACR)
+#   AKS_CLUSTER_NAME    — cluster name
+#   AKS_RESOURCE_GROUP  — resource group
 #   SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO
-#
-# Namespace convention:
-#   develop → aegis-dev   (if the namespace exists, else aegis)
-#   main    → aegis
-#   prod dispatch → aegis-prod
 # ---------------------------------------------------------------------------
 
 name: Deploy
 
 on:
-  # Auto-trigger: fires when Build succeeds on main or develop
   workflow_run:
     workflows: ["Build"]
     types: [completed]
     branches: [main, develop]
 
-  # Manual trigger: re-deploy any tag to a target environment
   workflow_dispatch:
     inputs:
       environment:
@@ -44,59 +42,107 @@ on:
         options: [dev, prod]
         default: dev
       image_tag:
-        description: "Override image tag (leave blank to use commit SHA)"
+        description: "Override image tag (blank = derive from commit SHA)"
         required: false
         type: string
 
 concurrency:
-  group: deploy-${{ github.event.workflow_run.head_branch || inputs.environment || 'dev' }}
-  cancel-in-progress: false   # never cancel a running deploy
+  group: deploy-${{ github.event.workflow_run.head_branch || inputs.environment }}
+  cancel-in-progress: false
 
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1 — RESOLVE ENV + TAG
+# ─────────────────────────────────────────────────────────────────────────────
 jobs:
-  # ── JOB 1: DEPLOY ────────────────────────────────────────────────────────────
-  deploy:
-    name: "Deploy → AKS"
+  resolve-env:
+    name: "CD – Resolve environment"
     runs-on: ubuntu-latest
 
-    # For workflow_run: only proceed if the build actually succeeded
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
 
-    permissions:
-      contents: read
-      id-token: write
-
-    env:
-      # Resolve namespace from trigger context
-      NAMESPACE: >-
-        ${{
-          github.event_name == 'workflow_dispatch' &&
-            (inputs.environment == 'prod' && 'aegis-prod' || 'aegis') ||
-          (github.event.workflow_run.head_branch == 'develop' && 'aegis' || 'aegis')
-        }}
+    outputs:
+      tag:       ${{ steps.resolve.outputs.tag }}
+      env:       ${{ steps.resolve.outputs.env }}
+      namespace: ${{ steps.resolve.outputs.namespace }}
+      overlay:   ${{ steps.resolve.outputs.overlay }}
 
     steps:
-      # ── Checkout the commit that was built ───────────────────────────────────
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
 
-      # ── Resolve image tag ─────────────────────────────────────────────────────
-      # Manual dispatch can override; otherwise derive from the build commit SHA.
-      - name: Set image tag
+      - name: Resolve environment and image tag
+        id: resolve
         run: |
-          if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> "$GITHUB_ENV"
-          else
-            SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
-            echo "IMAGE_TAG=sha-${SHA:0:7}" >> "$GITHUB_ENV"
-          fi
-          echo "DEPLOY_SHA=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_ENV"
+          BRANCH="${{ github.event.workflow_run.head_branch || inputs.environment }}"
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
 
-      # ── Detect which services changed in this commit ──────────────────────────
-      # Same path filters as build.yml — ensures we only touch what was built.
+          if [[ -n "${{ inputs.image_tag }}" ]]; then
+            TAG="${{ inputs.image_tag }}"
+          else
+            TAG="sha-${SHA:0:7}"
+          fi
+
+          if [[ "${BRANCH}" == "main" || "${{ inputs.environment }}" == "prod" ]]; then
+            ENV="prod"
+            NAMESPACE="aegis-prod"
+            OVERLAY="k8s/prod"
+          else
+            ENV="dev"
+            NAMESPACE="aegis-dev"
+            OVERLAY="k8s/dev"
+          fi
+
+          echo "tag=${TAG}"             >> "$GITHUB_OUTPUT"
+          echo "env=${ENV}"             >> "$GITHUB_OUTPUT"
+          echo "namespace=${NAMESPACE}" >> "$GITHUB_OUTPUT"
+          echo "overlay=${OVERLAY}"     >> "$GITHUB_OUTPUT"
+
+          echo "Resolved → env=${ENV}  tag=${TAG}  overlay=${OVERLAY}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 2 — AWAIT APPROVAL  (prod only — skipped entirely for dev)
+# Configure required reviewers: Settings → Environments → production
+# ─────────────────────────────────────────────────────────────────────────────
+  await-approval:
+    name: "CD – Await production approval"
+    runs-on: ubuntu-latest
+    needs: resolve-env
+    if: needs.resolve-env.outputs.env == 'prod'
+    environment: production
+    steps:
+      - name: Approval granted
+        run: echo "✅ Production deployment approved — proceeding."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 3 — UPDATE MANIFEST + APPLY
+# Detects changed services, patches kustomize image tags, commits, then applies
+# ─────────────────────────────────────────────────────────────────────────────
+  update-manifest:
+    name: "CD – Update manifests & deploy (${{ needs.resolve-env.outputs.env }})"
+    runs-on: ubuntu-latest
+    needs: [resolve-env, await-approval]
+
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      # ── Detect which services changed ───────────────────────────────────────
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -125,158 +171,167 @@ jobs:
             client:
               - 'client/**'
 
-      # ── Azure Login (OIDC) ────────────────────────────────────────────────────
-      - name: Azure Login
+      # ── Patch kustomize image tags ──────────────────────────────────────────
+      # kustomize edit set image replaces newName + newTag in the overlay's
+      # images: section, keeping the base deployment.yaml untouched.
+      - name: Update image tags in kustomize overlay
+        run: |
+          OVERLAY="${{ needs.resolve-env.outputs.overlay }}"
+          TAG="${{ needs.resolve-env.outputs.tag }}"
+          ACR="${{ secrets.ACR_NAME }}.azurecr.io"
+          UPDATED=()
+
+          cd "${OVERLAY}"
+
+          update() {
+            local svc="$1"
+            kustomize edit set image "${svc}=${ACR}/${svc}:${TAG}"
+            UPDATED+=("${svc}")
+            echo "→ ${svc}=${ACR}/${svc}:${TAG}"
+          }
+
+          [[ "${{ steps.filter.outputs.api-gateway }}"           == "true" ]] && update api-gateway
+          [[ "${{ steps.filter.outputs.health-records-service }}" == "true" ]] && update health-records-service
+          [[ "${{ steps.filter.outputs.medication-service }}"    == "true" ]] && update medication-service
+          [[ "${{ steps.filter.outputs.ai-service }}"            == "true" ]] && update ai-service
+          [[ "${{ steps.filter.outputs.notification-worker }}"   == "true" ]] && update notification-worker
+          [[ "${{ steps.filter.outputs.imaging-service }}"       == "true" ]] && update imaging-service
+          [[ "${{ steps.filter.outputs.diagnostic-agent }}"      == "true" ]] && update diagnostic-agent
+          [[ "${{ steps.filter.outputs.coordinator-agent }}"     == "true" ]] && update coordinator-agent
+          [[ "${{ steps.filter.outputs.image-analysis-agent }}"  == "true" ]] && update image-analysis-agent
+          [[ "${{ steps.filter.outputs.patient-history-agent }}" == "true" ]] && update patient-history-agent
+          [[ "${{ steps.filter.outputs.client }}"                == "true" ]] && update client
+
+          if [ ${#UPDATED[@]} -eq 0 ]; then
+            echo "No services changed — nothing to deploy."
+            echo "NOTHING_TO_DEPLOY=true" >> "$GITHUB_ENV"
+          else
+            echo "Updated: ${UPDATED[*]}"
+            printf '%s\n' "${UPDATED[@]}" > /tmp/updated-services.txt
+          fi
+
+      # ── Commit the tag bump back to the repo ────────────────────────────────
+      - name: Commit manifest changes
+        if: env.NOTHING_TO_DEPLOY != 'true'
+        run: |
+          OVERLAY="${{ needs.resolve-env.outputs.overlay }}"
+          TAG="${{ needs.resolve-env.outputs.tag }}"
+          ENV="${{ needs.resolve-env.outputs.env }}"
+          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "${OVERLAY}/kustomization.yaml"
+
+          if git diff --cached --quiet; then
+            echo "No manifest changes to commit."
+          else
+            git commit -m "chore(deploy): bump ${ENV} image tags to ${TAG} [${BRANCH}] [skip ci]"
+            git pull --rebase origin HEAD
+            git push
+          fi
+
+      # ── Azure Login + AKS credentials ───────────────────────────────────────
+      - name: Azure Login (OIDC)
+        if: env.NOTHING_TO_DEPLOY != 'true'
         uses: azure/login@v2
         with:
           client-id:       ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # ── AKS Credentials ───────────────────────────────────────────────────────
       - name: Get AKS credentials
+        if: env.NOTHING_TO_DEPLOY != 'true'
         uses: azure/aks-set-context@v4
         with:
           resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
           cluster-name:   ${{ secrets.AKS_CLUSTER_NAME }}
 
-      # ── Update image tags ─────────────────────────────────────────────────────
-      # kubectl set image patches only the container image field; the rest of the
-      # manifest (probes, resource limits, env) stays as-is from the last apply.
-      - name: Update image tags
-        run: |
-          ACR="${{ secrets.ACR_NAME }}.azurecr.io"
-          TAG="${{ env.IMAGE_TAG }}"
-          NS="${{ env.NAMESPACE }}"
-          DEPLOYED=()
+      # ── Apply manifests to AKS ───────────────────────────────────────────────
+      - name: kubectl apply
+        if: env.NOTHING_TO_DEPLOY != 'true'
+        run: kubectl apply -k ${{ needs.resolve-env.outputs.overlay }}
 
-          update_image() {
-            local deployment="$1" container="$2" image="$3"
-            echo "→ $deployment: $image"
-            kubectl set image "deployment/$deployment" "$container=$image" -n "$NS" && DEPLOYED+=("$deployment")
-          }
-
-          [[ "${{ steps.filter.outputs.api-gateway }}"           == "true" ]] && update_image api-gateway           api-gateway           "${ACR}/api-gateway:${TAG}"
-          [[ "${{ steps.filter.outputs.health-records-service }}" == "true" ]] && update_image health-records-service health-records-service "${ACR}/health-records-service:${TAG}"
-          [[ "${{ steps.filter.outputs.medication-service }}"     == "true" ]] && update_image medication-service    medication-service    "${ACR}/medication-service:${TAG}"
-          [[ "${{ steps.filter.outputs.ai-service }}"            == "true" ]] && update_image ai-service            ai-service            "${ACR}/ai-service:${TAG}"
-          [[ "${{ steps.filter.outputs.notification-worker }}"   == "true" ]] && update_image notification-worker   notification-worker   "${ACR}/notification-worker:${TAG}"
-          [[ "${{ steps.filter.outputs.imaging-service }}"       == "true" ]] && update_image imaging-service       imaging-service       "${ACR}/imaging-service:${TAG}"
-          [[ "${{ steps.filter.outputs.diagnostic-agent }}"      == "true" ]] && update_image diagnostic-agent      diagnostic-agent      "${ACR}/diagnostic-agent:${TAG}"
-          [[ "${{ steps.filter.outputs.coordinator-agent }}"     == "true" ]] && update_image coordinator-agent     coordinator-agent     "${ACR}/coordinator-agent:${TAG}"
-          [[ "${{ steps.filter.outputs.image-analysis-agent }}"  == "true" ]] && update_image image-analysis-agent  image-analysis-agent  "${ACR}/image-analysis-agent:${TAG}"
-          [[ "${{ steps.filter.outputs.patient-history-agent }}" == "true" ]] && update_image patient-history-agent patient-history-agent "${ACR}/patient-history-agent:${TAG}"
-          [[ "${{ steps.filter.outputs.client }}"                == "true" ]] && update_image client                client                "${ACR}/client:${TAG}"
-
-          if [ ${#DEPLOYED[@]} -eq 0 ]; then
-            echo "No services changed — nothing to deploy."
-          else
-            echo "Updated: ${DEPLOYED[*]}"
-            # Persist for the rollout status step
-            printf '%s\n' "${DEPLOYED[@]}" > /tmp/deployed-services.txt
-          fi
-
-      # ── Rollout Status ────────────────────────────────────────────────────────
-      # Blocks until every updated Deployment's pods reach Ready state.
-      # Timeout per deployment: 5 minutes (sufficient for image pull + startup).
+      # ── Rollout status ───────────────────────────────────────────────────────
       - name: Verify rollout status
+        if: env.NOTHING_TO_DEPLOY != 'true'
         run: |
-          NS="${{ env.NAMESPACE }}"
-          [ -f /tmp/deployed-services.txt ] || { echo "Nothing was deployed."; exit 0; }
-
+          NS="${{ needs.resolve-env.outputs.namespace }}"
           FAILED=()
-          while IFS= read -r deployment; do
-            echo "⏳ Waiting for rollout: $deployment"
-            if kubectl rollout status "deployment/$deployment" -n "$NS" --timeout=5m; then
-              echo "✅ $deployment is ready"
+
+          while IFS= read -r svc; do
+            echo "⏳ $svc"
+            if kubectl rollout status "deployment/$svc" -n "$NS" --timeout=5m; then
+              echo "✅ $svc ready"
             else
-              echo "❌ $deployment rollout failed or timed out"
-              FAILED+=("$deployment")
+              echo "❌ $svc failed"
+              FAILED+=("$svc")
             fi
-          done < /tmp/deployed-services.txt
+          done < /tmp/updated-services.txt
 
           if [ ${#FAILED[@]} -gt 0 ]; then
-            echo ""
-            echo "Failed deployments: ${FAILED[*]}"
-            kubectl get pods -n "$NS" -l "app in ($(IFS=,; echo "${FAILED[*]}"))" --sort-by=.status.startTime
+            kubectl get pods -n "$NS" --sort-by=.status.startTime
             exit 1
           fi
 
-      # ── Smoke Tests ───────────────────────────────────────────────────────────
-      # Port-forward the api-gateway into the runner and assert the health
-      # endpoint returns HTTP 200. Validates the new image boots correctly.
+      # ── Smoke test ───────────────────────────────────────────────────────────
       - name: Smoke test — api-gateway /healthz
+        if: env.NOTHING_TO_DEPLOY != 'true'
         run: |
-          NS="${{ env.NAMESPACE }}"
+          NS="${{ needs.resolve-env.outputs.namespace }}"
+          grep -qx "api-gateway" /tmp/updated-services.txt 2>/dev/null || { echo "api-gateway not updated — skip"; exit 0; }
 
-          # Skip if api-gateway was not in this deploy
-          if ! grep -qx "api-gateway" /tmp/deployed-services.txt 2>/dev/null; then
-            echo "api-gateway not in this deploy — skipping smoke test"
-            exit 0
-          fi
-
-          echo "Starting port-forward to api-gateway:5000..."
           kubectl port-forward deployment/api-gateway 15000:5000 -n "$NS" &
           PF_PID=$!
           trap "kill $PF_PID 2>/dev/null" EXIT
-
-          # Give the port-forward a moment to establish
           sleep 5
 
-          echo "Testing /healthz..."
-          for attempt in 1 2 3; do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:15000/healthz)
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "✅ /healthz returned 200"
-              exit 0
-            fi
-            echo "Attempt $attempt: got $HTTP_CODE — retrying in 5s"
+          for i in 1 2 3; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:15000/healthz)
+            [ "$CODE" = "200" ] && { echo "✅ /healthz → 200"; exit 0; }
+            echo "Attempt $i: $CODE — retrying"
             sleep 5
           done
+          echo "❌ Smoke test failed"; exit 1
 
-          echo "❌ Smoke test failed — api-gateway /healthz did not return 200"
-          kubectl logs deployment/api-gateway -n "$NS" --tail=30
-          exit 1
-
-      # ── Step Summary ──────────────────────────────────────────────────────────
+      # ── Step summary ─────────────────────────────────────────────────────────
       - name: Write deploy summary
         if: always()
         run: |
           {
-            echo "## Aegis Deploy — \`${{ job.status }}\`"
+            echo "## Deploy — \`${{ needs.resolve-env.outputs.env }}\` — \`${{ job.status }}\`"
             echo ""
-            echo "| Field | Value |"
+            echo "| | |"
             echo "|---|---|"
-            echo "| **Namespace** | \`${{ env.NAMESPACE }}\` |"
-            echo "| **Image tag** | \`${{ env.IMAGE_TAG }}\` |"
-            echo "| **Commit** | \`${DEPLOY_SHA:0:7}\` |"
+            echo "| **Tag** | \`${{ needs.resolve-env.outputs.tag }}\` |"
+            echo "| **Namespace** | \`${{ needs.resolve-env.outputs.namespace }}\` |"
             echo "| **Actor** | \`${{ github.actor }}\` |"
-            echo "| **Run** | [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
-            echo ""
-            if [ -f /tmp/deployed-services.txt ]; then
-              echo "### Updated services"
-              while IFS= read -r svc; do echo "- \`$svc\`"; done < /tmp/deployed-services.txt
-            else
-              echo "_No services were updated in this run._"
+            if [ -f /tmp/updated-services.txt ]; then
+              echo ""
+              echo "### Updated"
+              while IFS= read -r s; do echo "- \`$s\`"; done < /tmp/updated-services.txt
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── JOB 2: NOTIFY ────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 4 — NOTIFY  (always)
+# ─────────────────────────────────────────────────────────────────────────────
   notify:
-    name: Notify
+    name: "Notify"
     runs-on: ubuntu-latest
-    needs: deploy
+    needs: [resolve-env, await-approval, update-manifest]
     if: always()
     steps:
       - name: Resolve status
         id: status
         run: |
-          result="${{ needs.deploy.result }}"
-          case "$result" in
-            success)  echo "value=success" >> "$GITHUB_OUTPUT"; echo "emoji=✅" >> "$GITHUB_OUTPUT" ;;
-            skipped)  echo "value=skipped" >> "$GITHUB_OUTPUT"; echo "emoji=⏭️" >> "$GITHUB_OUTPUT" ;;
-            *)        echo "value=failure" >> "$GITHUB_OUTPUT"; echo "emoji=❌" >> "$GITHUB_OUTPUT" ;;
-          esac
+          RESULTS="${{ join(needs.*.result, ',') }}"
+          if echo "$RESULTS" | grep -qE 'failure|cancelled'; then
+            echo "value=failure" >> "$GITHUB_OUTPUT"; echo "emoji=❌" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=success" >> "$GITHUB_OUTPUT"; echo "emoji=✅" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Send email notification
         uses: dawidd6/action-send-mail@v3
@@ -288,15 +343,13 @@ jobs:
           password:       ${{ secrets.SMTP_PASSWORD }}
           to:             ${{ secrets.EMAIL_TO }}
           from:           Aegis CD <${{ secrets.SMTP_USERNAME }}>
-          subject:        "${{ steps.status.outputs.emoji }} [Aegis Deploy] ${{ steps.status.outputs.value }} — ${{ github.event.workflow_run.head_branch || 'manual' }} #${{ github.run_number }}"
+          subject:        "${{ steps.status.outputs.emoji }} [Aegis Deploy] ${{ steps.status.outputs.value }} — ${{ needs.resolve-env.outputs.env }} ${{ needs.resolve-env.outputs.tag }}"
           body: |
             Aegis Health — Deploy Pipeline
 
-            Status     : ${{ steps.status.outputs.value }}
-            Environment: ${{ env.NAMESPACE || 'aegis' }}
-            Branch     : ${{ github.event.workflow_run.head_branch || inputs.environment }}
-            Commit     : ${{ github.event.workflow_run.head_sha || github.sha }}
-            Actor      : ${{ github.actor }}
-            Run        : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-            ${{ needs.deploy.result == 'failure' && 'Check the run logs and pod events for failure details.' || 'All updated services passed rollout and smoke tests.' }}
+            Status      : ${{ steps.status.outputs.value }}
+            Environment : ${{ needs.resolve-env.outputs.env }}
+            Tag         : ${{ needs.resolve-env.outputs.tag }}
+            Namespace   : ${{ needs.resolve-env.outputs.namespace }}
+            Actor       : ${{ github.actor }}
+            Run         : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -27,7 +27,7 @@ spec:
               secretProviderClass: aegis-kv-secret-provider
       containers:
         - name: health-records-service
-          image: __ACR_NAME__.azurecr.io/health-records-service:latest
+          image: health-records-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 5001

@@ -31,7 +31,7 @@ spec:
               secretProviderClass: aegis-kv-secret-provider
       containers:
         - name: diagnostic-agent-service
-          image: __ACR_NAME__.azurecr.io/diagnostic-agent-service:latest
+          image: diagnostic-agent:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 5005

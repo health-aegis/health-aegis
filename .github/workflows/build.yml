@@ -112,39 +112,39 @@ jobs:
 
           # node/TS services
           [[ "${{ steps.filter.outputs.api-gateway }}" == "true" ]] && svc+=(
-            '{"service":"api-gateway","context":".","dockerfile":"services/api-gateway/Dockerfile","lang":"node","dir":"services/api-gateway","sonar_key":"aegis-health_api-gateway"}'
+            '{"service":"api-gateway","context":".","dockerfile":"services/api-gateway/Dockerfile","lang":"node","dir":"services/api-gateway","sonar_key":"health-aegis_api-gateway"}'
           )
           [[ "${{ steps.filter.outputs.health-records-service }}" == "true" ]] && svc+=(
-            '{"service":"health-records-service","context":"services/health-records-service","dockerfile":"services/health-records-service/Dockerfile","lang":"node","dir":"services/health-records-service","sonar_key":"aegis-health_health-records-service"}'
+            '{"service":"health-records-service","context":"services/health-records-service","dockerfile":"services/health-records-service/Dockerfile","lang":"node","dir":"services/health-records-service","sonar_key":"health-aegis_health-records-service"}'
           )
           [[ "${{ steps.filter.outputs.medication-service }}" == "true" ]] && svc+=(
-            '{"service":"medication-service","context":"services/medication-service","dockerfile":"services/medication-service/Dockerfile","lang":"node","dir":"services/medication-service","sonar_key":"aegis-health_medication-service"}'
+            '{"service":"medication-service","context":"services/medication-service","dockerfile":"services/medication-service/Dockerfile","lang":"node","dir":"services/medication-service","sonar_key":"health-aegis_medication-service"}'
           )
           [[ "${{ steps.filter.outputs.ai-service }}" == "true" ]] && svc+=(
-            '{"service":"ai-service","context":"services/ai-service","dockerfile":"services/ai-service/Dockerfile","lang":"node","dir":"services/ai-service","sonar_key":"aegis-health_ai-service"}'
+            '{"service":"ai-service","context":"services/ai-service","dockerfile":"services/ai-service/Dockerfile","lang":"node","dir":"services/ai-service","sonar_key":"health-aegis_ai-service"}'
           )
           [[ "${{ steps.filter.outputs.notification-worker }}" == "true" ]] && svc+=(
-            '{"service":"notification-worker","context":"services/notification-worker","dockerfile":"services/notification-worker/Dockerfile","lang":"node","dir":"services/notification-worker","sonar_key":"aegis-health_notification-worker"}'
+            '{"service":"notification-worker","context":"services/notification-worker","dockerfile":"services/notification-worker/Dockerfile","lang":"node","dir":"services/notification-worker","sonar_key":"health-aegis_notification-worker"}'
           )
           [[ "${{ steps.filter.outputs.client }}" == "true" ]] && svc+=(
-            '{"service":"client","context":".","dockerfile":"client/Dockerfile","lang":"node","dir":"client","sonar_key":"aegis-health_client"}'
+            '{"service":"client","context":".","dockerfile":"client/Dockerfile","lang":"node","dir":"client","sonar_key":"health-aegis_client"}'
           )
 
           # python services
           [[ "${{ steps.filter.outputs.imaging-service }}" == "true" ]] && svc+=(
-            '{"service":"imaging-service","context":"services/imaging-service","dockerfile":"services/imaging-service/Dockerfile","lang":"python","dir":"services/imaging-service","sonar_key":"aegis-health_imaging-service"}'
+            '{"service":"imaging-service","context":"services/imaging-service","dockerfile":"services/imaging-service/Dockerfile","lang":"python","dir":"services/imaging-service","sonar_key":"health-aegis_imaging-service"}'
           )
           [[ "${{ steps.filter.outputs.diagnostic-agent }}" == "true" ]] && svc+=(
-            '{"service":"diagnostic-agent","context":"services/diagnostic-agent-service","dockerfile":"services/diagnostic-agent-service/Dockerfile","lang":"python","dir":"services/diagnostic-agent-service","sonar_key":"aegis-health_diagnostic-agent"}'
+            '{"service":"diagnostic-agent","context":"services/diagnostic-agent-service","dockerfile":"services/diagnostic-agent-service/Dockerfile","lang":"python","dir":"services/diagnostic-agent-service","sonar_key":"health-aegis_diagnostic-agent"}'
           )
           [[ "${{ steps.filter.outputs.coordinator-agent }}" == "true" ]] && svc+=(
-            '{"service":"coordinator-agent","context":"services/coordinator-agent","dockerfile":"services/coordinator-agent/Dockerfile","lang":"python","dir":"services/coordinator-agent","sonar_key":"aegis-health_coordinator-agent"}'
+            '{"service":"coordinator-agent","context":"services/coordinator-agent","dockerfile":"services/coordinator-agent/Dockerfile","lang":"python","dir":"services/coordinator-agent","sonar_key":"health-aegis_coordinator-agent"}'
           )
           [[ "${{ steps.filter.outputs.image-analysis-agent }}" == "true" ]] && svc+=(
-            '{"service":"image-analysis-agent","context":"services/image-analysis-agent","dockerfile":"services/image-analysis-agent/Dockerfile","lang":"python","dir":"services/image-analysis-agent","sonar_key":"aegis-health_image-analysis-agent"}'
+            '{"service":"image-analysis-agent","context":"services/image-analysis-agent","dockerfile":"services/image-analysis-agent/Dockerfile","lang":"python","dir":"services/image-analysis-agent","sonar_key":"health-aegis_image-analysis-agent"}'
           )
           [[ "${{ steps.filter.outputs.patient-history-agent }}" == "true" ]] && svc+=(
-            '{"service":"patient-history-agent","context":"services/patient-history-agent","dockerfile":"services/patient-history-agent/Dockerfile","lang":"python","dir":"services/patient-history-agent","sonar_key":"aegis-health_patient-history-agent"}'
+            '{"service":"patient-history-agent","context":"services/patient-history-agent","dockerfile":"services/patient-history-agent/Dockerfile","lang":"python","dir":"services/patient-history-agent","sonar_key":"health-aegis_patient-history-agent"}'
           )
 
           if [ ${#svc[@]} -eq 0 ]; then
@@ -206,8 +206,8 @@ jobs:
         with:
           projectBaseDir: ${{ matrix.dir }}
           args: >
-            -Dsonar.projectKey=${{ matrix.sonar_key }}
-            -Dsonar.organization=aegis-health
+            -Dsonar.projectKey=health-aegis_health-aegis
+            -Dsonar.organization=health-aegis
             -Dsonar.sources=src
             -Dsonar.qualitygate.wait=true
         env:

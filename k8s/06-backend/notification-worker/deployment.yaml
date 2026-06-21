@@ -27,7 +27,7 @@ spec:
               secretProviderClass: aegis-kv-secret-provider
       containers:
         - name: notification-worker
-          image: __ACR_NAME__.azurecr.io/notification-worker:latest
+          image: notification-worker:latest
           imagePullPolicy: Always
           volumeMounts:
             - name: secrets-store

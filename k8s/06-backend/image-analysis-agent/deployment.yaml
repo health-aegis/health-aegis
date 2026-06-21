@@ -28,7 +28,7 @@ spec:
               secretProviderClass: aegis-kv-secret-provider
       containers:
         - name: image-analysis-agent
-          image: __ACR_NAME__.azurecr.io/image-analysis-agent:latest
+          image: image-analysis-agent:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8001
