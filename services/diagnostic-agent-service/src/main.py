@@ -28,19 +28,14 @@ if AZURE_AI_ENDPOINT and AZURE_AI_KEY and AZURE_AI_KEY != "mock-key":
     try:
         from azure.ai.inference import ChatCompletionsClient
         from azure.core.credentials import AzureKeyCredential
-        
-        endpoint = AZURE_AI_ENDPOINT
-        api_version = None
-        if endpoint.endswith("/openai/v1"):
-            endpoint = endpoint[:-10] + "/openai/deployments/gpt-4o-mini"
-            api_version = "2024-02-15-preview"
 
+        # Use endpoint as-is — ChatCompletionsClient handles both Azure AI
+        # Foundry serverless and GitHub Models endpoints without api_version.
         ai_client = ChatCompletionsClient(
-            endpoint=endpoint, 
+            endpoint=AZURE_AI_ENDPOINT,
             credential=AzureKeyCredential(AZURE_AI_KEY),
-            api_version=api_version
         )
-        print(f"✅ Azure AI Foundry connected → {endpoint}")
+        print(f"✅ Azure AI Foundry connected → {AZURE_AI_ENDPOINT}")
     except Exception as e:
         print(f"⚠️ Azure AI Client init error: {e}")
 else:
