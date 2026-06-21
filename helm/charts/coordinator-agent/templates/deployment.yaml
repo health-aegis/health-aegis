@@ -1,5 +1,5 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: coordinator-agent
   namespace: {{ .Release.Namespace }}
@@ -11,12 +11,18 @@ spec:
     matchLabels:
       {{- include "coordinator-agent.selectorLabels" . | nindent 6 }}
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    canary:
+      steps:
+        - setWeight: 20
+        - pause:
+            duration: 30s
+        - setWeight: 50
+        - pause:
+            duration: 30s
   template:
     metadata:
+      annotations:
+        rollme: {{ .Values.image.tag | quote }}
       labels:
         azure.workload.identity/use: "true"
         {{- include "coordinator-agent.labels" . | nindent 8 }}
