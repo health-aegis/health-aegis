@@ -21,6 +21,8 @@ RUN npm run build
 # ── Nginx static server stage ──────────────────────────────────────────
 FROM nginx:alpine
 
+RUN apk update && apk upgrade --no-cache && rm -rf /var/cache/apk/*
+
 COPY client/nginx.conf /etc/nginx/conf.d/default.conf
 
 COPY --from=builder /usr/src/app/client/dist /usr/share/nginx/html
