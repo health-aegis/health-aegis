@@ -2,6 +2,21 @@ global:
   acrLoginServer: aegistestacr.azurecr.io
   imageTag: latest
 
+# Per-service image tags — patched by deploy.yml on every CI build.
+# Falls back to global.imageTag when a key is absent.
+imageTags:
+  api-gateway: "latest"
+  health-records-service: "latest"
+  medication-service: "latest"
+  ai-service: "latest"
+  notification-worker: "latest"
+  imaging-service: "latest"
+  diagnostic-agent-service: "latest"
+  coordinator-agent: "latest"
+  image-analysis-agent: "latest"
+  patient-history-agent: "latest"
+  client: "latest"
+
 namespace:
   name: aegis-dev
 

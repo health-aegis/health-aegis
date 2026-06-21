@@ -136,11 +136,10 @@ jobs:
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
 
     permissions:
-      contents: read
+      contents: write
 
     steps:
-      # ── Checkout health-aegis at the triggering commit (read-only) ───────────
-      # Needed so paths-filter can detect which services changed.
+      # ── Checkout health-aegis at the triggering commit ───────────────────────
       - uses: actions/checkout@v4
         with:
           ref:        ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -175,16 +174,10 @@ jobs:
             client:
               - 'client/**'
 
-      # ── Checkout k8s-manifests (GitOps repo) ────────────────────────────────
-      - name: Checkout k8s-manifests
-        uses: actions/checkout@v4
-        with:
-          repository: health-aegis/k8s-manifests
-          token:      ${{ secrets.GITOPS_PAT }}
-          path:       k8s-manifests
-
-      # ── Patch image.tag for each changed service ─────────────────────────────
-      - name: Patch image tags in k8s-manifests
+      # ── Patch imageTags.<service> in helm/aegis-health/values-<env>.yaml ─────
+      # ArgoCD watches THIS repo (health-aegis) at helm/aegis-health/, so
+      # patching values-dev.yaml here is what actually triggers a rollout.
+      - name: Patch image tags in helm/aegis-health/values-<env>.yaml
         env:
           TAG:                        ${{ needs.resolve-env.outputs.tag }}
           ENV:                        ${{ needs.resolve-env.outputs.env }}
@@ -200,32 +193,29 @@ jobs:
           CHANGED_patient_history:    ${{ steps.filter.outputs.patient-history-agent }}
           CHANGED_client:             ${{ steps.filter.outputs.client }}
         run: |
+          VALUES="helm/aegis-health/values-${ENV}.yaml"
+
           patch_tag() {
-            local SVC="$1" CHART="$2" CHANGED="$3"
+            local SVC="$1" CHANGED="$2"
             [ "$CHANGED" != "true" ] && return
-            local VALUES="k8s-manifests/charts/${CHART}/values-${ENV}.yaml"
-            if [ ! -f "$VALUES" ]; then
-              echo "⚠ ${VALUES} not found — skipping ${SVC}"; return
-            fi
-            sed -i "s/^  tag: \".*\"/  tag: \"${TAG}\"/" "$VALUES"
-            echo "  ✓ ${CHART}/values-${ENV}.yaml → tag=${TAG}"
+            sed -i "s|^  ${SVC}: \".*\"|  ${SVC}: \"${TAG}\"|" "$VALUES"
+            echo "  ✓ ${SVC} → ${TAG}"
           }
 
-          patch_tag api-gateway              api-gateway              "$CHANGED_api_gateway"
-          patch_tag health-records-service   health-records-service   "$CHANGED_health_records"
-          patch_tag medication-service       medication-service       "$CHANGED_medication"
-          patch_tag ai-service               ai-service               "$CHANGED_ai"
-          patch_tag notification-worker      notification-worker      "$CHANGED_notification"
-          patch_tag imaging-service          imaging-service          "$CHANGED_imaging"
-          patch_tag diagnostic-agent-service diagnostic-agent-service "$CHANGED_diagnostic"
-          patch_tag coordinator-agent        coordinator-agent        "$CHANGED_coordinator"
-          patch_tag image-analysis-agent     image-analysis-agent     "$CHANGED_image_analysis"
-          patch_tag patient-history-agent    patient-history-agent    "$CHANGED_patient_history"
-          patch_tag client                   client                   "$CHANGED_client"
+          patch_tag api-gateway              "$CHANGED_api_gateway"
+          patch_tag health-records-service   "$CHANGED_health_records"
+          patch_tag medication-service       "$CHANGED_medication"
+          patch_tag ai-service               "$CHANGED_ai"
+          patch_tag notification-worker      "$CHANGED_notification"
+          patch_tag imaging-service          "$CHANGED_imaging"
+          patch_tag diagnostic-agent-service "$CHANGED_diagnostic"
+          patch_tag coordinator-agent        "$CHANGED_coordinator"
+          patch_tag image-analysis-agent     "$CHANGED_image_analysis"
+          patch_tag patient-history-agent    "$CHANGED_patient_history"
+          patch_tag client                   "$CHANGED_client"
 
-      # ── Commit and push to k8s-manifests ────────────────────────────────────
-      - name: Commit image tag bump to k8s-manifests
-        working-directory: k8s-manifests
+      # ── Commit and push to health-aegis ─────────────────────────────────────
+      - name: Commit image tag bump
         env:
           ENV:    ${{ needs.resolve-env.outputs.env }}
           TAG:    ${{ needs.resolve-env.outputs.tag }}
@@ -234,15 +224,15 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add charts/
+          git add helm/aegis-health/values-${ENV}.yaml
           git diff --cached --quiet \
             && echo "No image tag changes to commit." \
             && exit 0
 
           git commit -m "chore(deploy): bump ${ENV} image tags to ${TAG} [${BRANCH}] [skip ci]"
-          git fetch origin main
-          git rebase origin/main
-          git push origin HEAD:main
+          git fetch origin "${BRANCH}"
+          git rebase "origin/${BRANCH}"
+          git push origin "HEAD:${BRANCH}"
 
       # ── Step summary ─────────────────────────────────────────────────────────
       - name: Write deploy summary

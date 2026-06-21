@@ -1,12 +1,15 @@
 # ─── Backend microservices ────────────────────────────────────────────────────
-# One Deployment (+ Service unless worker) per entry in .Values.services.
+# One Rollout (+ Service unless worker) per entry in .Values.services.
+# imageTags.<name> is patched per-service by deploy.yml on each CI push;
+# falls back to global.imageTag ("latest") if a per-service entry is absent.
 {{- $root := . -}}
 {{- range .Values.services }}
-{{- $svcName := .serviceName | default .name }}
+{{- $svcName  := .serviceName | default .name }}
 {{- $resources := .resources | default $root.Values.backendDefaults.resources }}
+{{- $imageTag  := index $root.Values.imageTags .name | default $root.Values.global.imageTag }}
 ---
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: {{ .name }}
   namespace: {{ $root.Release.Namespace }}
@@ -18,8 +21,19 @@ spec:
   selector:
     matchLabels:
       app: {{ .name }}
+  strategy:
+    canary:
+      steps:
+        - setWeight: 20
+        - pause:
+            duration: 30s
+        - setWeight: 50
+        - pause:
+            duration: 30s
   template:
     metadata:
+      annotations:
+        rollme: {{ $imageTag | quote }}
       labels:
         app: {{ .name }}
         azure.workload.identity/use: "true"
@@ -34,7 +48,7 @@ spec:
               secretProviderClass: {{ $root.Values.secretProviderClassName }}
       containers:
         - name: {{ .name }}
-          image: {{ include "aegis.image" (dict "root" $root "repo" .image) }}
+          image: {{ $root.Values.global.acrLoginServer }}/{{ .image }}:{{ $imageTag }}
           imagePullPolicy: {{ $root.Values.global.imagePullPolicy }}
           {{- if not .worker }}
           ports:

@@ -2,6 +2,19 @@ global:
   acrLoginServer: aegisprodacr.azurecr.io
   imageTag: latest
 
+imageTags:
+  api-gateway: "latest"
+  health-records-service: "latest"
+  medication-service: "latest"
+  ai-service: "latest"
+  notification-worker: "latest"
+  imaging-service: "latest"
+  diagnostic-agent-service: "latest"
+  coordinator-agent: "latest"
+  image-analysis-agent: "latest"
+  patient-history-agent: "latest"
+  client: "latest"
+
 namespace:
   name: aegis-prod
 
