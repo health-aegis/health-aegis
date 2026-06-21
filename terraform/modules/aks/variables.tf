@@ -61,6 +61,11 @@ variable "user_node_vm_size" {
   default     = "Standard_D2s_v3"
 }
 
+variable "app_gateway_id" {
+  description = "Resource ID of the Application Gateway for the AGIC addon"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags to apply to AKS resources"
   type        = map(string)
