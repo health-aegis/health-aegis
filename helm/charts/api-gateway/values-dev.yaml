@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   acrLoginServer: aegistestacr.azurecr.io
-  tag: "latest"
+  tag: "sha-2449c7d"
 
 resources:
   requests:
