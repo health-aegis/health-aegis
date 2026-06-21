@@ -334,25 +334,27 @@ jobs:
       - name: Load image
         run: docker load < /tmp/${{ matrix.service }}.tar.gz
 
-      - name: Trivy findings (table — diagnostic only)
+      - name: Trivy vulnerability scan (enforce gate)
         uses: aquasecurity/trivy-action@master
-        continue-on-error: true
         with:
           image-ref:      ${{ secrets.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}
           format:         table
           severity:       HIGH,CRITICAL
-          exit-code:      '0'
+          exit-code:      '1'
           ignore-unfixed: true
+          scanners:       vuln
 
-      - name: Trivy vulnerability scan
+      - name: Trivy vulnerability scan (SARIF upload)
         uses: aquasecurity/trivy-action@master
+        if: always()
         with:
           image-ref:      ${{ secrets.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}
           format:         sarif
           output:         trivy-${{ matrix.service }}.sarif
           severity:       HIGH,CRITICAL
-          exit-code:      '1'
+          exit-code:      '0'
           ignore-unfixed: true
+          scanners:       vuln
 
       - name: Upload SARIF to GitHub Security tab
         if: always()
