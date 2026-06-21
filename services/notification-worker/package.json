@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "dotenv": "^16.4.5",
-    "mongoose": "^6.13.5",
+    "mongoose": "^6.13.9",
     "nodemailer": "^6.9.14"
   },
   "devDependencies": {
