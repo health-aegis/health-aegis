@@ -1,4 +1,4 @@
-# ── Build stage ───────────────────────────────────────────────────────────────
+# ── Build stage — includes SAS URL generation and diagnostics mock fallback ───
 FROM node:20-alpine AS builder
 
 # Use project root as workspace so the directory structure mirrors the repo:
