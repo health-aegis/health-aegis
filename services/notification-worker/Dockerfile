@@ -16,6 +16,8 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
+RUN apk update && apk upgrade --no-cache
+
 ENV NODE_ENV=production
 
 COPY package*.json ./

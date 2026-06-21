@@ -2,7 +2,7 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache wget
+RUN apk update && apk upgrade --no-cache && apk add --no-cache wget
 
 COPY package*.json ./
 RUN npm install --omit=dev
