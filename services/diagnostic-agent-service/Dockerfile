@@ -1,4 +1,4 @@
-# diagnostic-agent-service — multistage, non-root
+# diagnostic-agent-service — multistage, non-root, with mock fallback on live failure
 FROM python:3.11-slim AS builder
 WORKDIR /app
 COPY requirements.txt .
