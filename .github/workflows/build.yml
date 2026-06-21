@@ -228,6 +228,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Node dependencies for Snyk
+        if: matrix.lang == 'node'
+        working-directory: ${{ matrix.dir }}
+        run: npm ci --prefer-offline --no-audit
+
       - name: Snyk dependency scan
         uses: snyk/actions/node@master
         if: matrix.lang == 'node'
