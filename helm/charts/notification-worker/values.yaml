@@ -1,0 +1,32 @@
+replicaCount: 1
+
+image:
+  acrLoginServer: aegisacraswin.azurecr.io
+  repository: notification-worker
+  pullPolicy: Always
+  tag: "latest"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  cpuUtilization: 70
+  memoryUtilization: 80
+
+secrets:
+  providerClassName: aegis-kv-secret-provider
+  kvSecretName: aegis-kv-secrets
+
+configMap:
+  name: aegis-config
+
+serviceAccount:
+  name: aegis-workload-identity

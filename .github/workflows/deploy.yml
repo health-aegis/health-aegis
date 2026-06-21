@@ -17,11 +17,10 @@
 #   develop → dev  → k8s/dev  overlay → namespace aegis-dev
 #   main    → prod → k8s/prod overlay → namespace aegis-prod
 #
-# Required secrets:
+# Required secrets (set in health-aegis repo → Settings → Secrets → Actions):
 #   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  — OIDC
-#   ACR_NAME            — registry name without .azurecr.io (test or prod ACR)
-#   AKS_CLUSTER_NAME    — cluster name
-#   AKS_RESOURCE_GROUP  — resource group
+#   ACR_NAME            — registry name without .azurecr.io (e.g. aegistestacr)
+#   GITOPS_PAT          — PAT with repo write on health-aegis/k8s-manifests
 #   SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO
 # ---------------------------------------------------------------------------
 
@@ -119,8 +118,12 @@ jobs:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB 3 — UPDATE MANIFEST
-# Detects changed services, patches kustomize image tags, commits back.
-# ArgoCD watches the repo and syncs the cluster automatically.
+# Detects which services changed, then patches each service's individual
+# values-dev.yaml / values-prod.yaml image.tag in k8s-manifests.
+# ArgoCD watches k8s-manifests and syncs the cluster automatically.
+#
+# Requires secret GITOPS_PAT — a PAT with repo write scope on
+# health-aegis/k8s-manifests (same PAT used by terraform-aegis).
 # ─────────────────────────────────────────────────────────────────────────────
   update-manifest:
     name: "CD – Update manifests (${{ needs.resolve-env.outputs.env }})"
@@ -133,46 +136,112 @@ jobs:
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
 
     permissions:
-      contents: write
+      contents: read
 
     steps:
+      # ── Checkout health-aegis at the triggering commit (read-only) ───────────
+      # Needed so paths-filter can detect which services changed.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref:        ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
-          token: ${{ github.token }}
 
-      # ── Patch Helm values image tag ─────────────────────────────────────────
-      # Updates global.imageTag in the env-specific values file.
-      # ArgoCD detects the commit and syncs the Helm release automatically.
-      - name: Update image tag in Helm values
+      # ── Detect which services changed in the triggering build ────────────────
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api-gateway:
+              - 'services/api-gateway/**'
+              - 'shared/**'
+            health-records-service:
+              - 'services/health-records-service/**'
+            medication-service:
+              - 'services/medication-service/**'
+            ai-service:
+              - 'services/ai-service/**'
+            notification-worker:
+              - 'services/notification-worker/**'
+            imaging-service:
+              - 'services/imaging-service/**'
+            diagnostic-agent-service:
+              - 'services/diagnostic-agent-service/**'
+            coordinator-agent:
+              - 'services/coordinator-agent/**'
+            image-analysis-agent:
+              - 'services/image-analysis-agent/**'
+            patient-history-agent:
+              - 'services/patient-history-agent/**'
+            client:
+              - 'client/**'
+
+      # ── Checkout k8s-manifests (GitOps repo) ────────────────────────────────
+      - name: Checkout k8s-manifests
+        uses: actions/checkout@v4
+        with:
+          repository: health-aegis/k8s-manifests
+          token:      ${{ secrets.GITOPS_PAT }}
+          path:       k8s-manifests
+
+      # ── Patch image.tag for each changed service ─────────────────────────────
+      - name: Patch image tags in k8s-manifests
+        env:
+          TAG:                        ${{ needs.resolve-env.outputs.tag }}
+          ENV:                        ${{ needs.resolve-env.outputs.env }}
+          CHANGED_api_gateway:        ${{ steps.filter.outputs.api-gateway }}
+          CHANGED_health_records:     ${{ steps.filter.outputs.health-records-service }}
+          CHANGED_medication:         ${{ steps.filter.outputs.medication-service }}
+          CHANGED_ai:                 ${{ steps.filter.outputs.ai-service }}
+          CHANGED_notification:       ${{ steps.filter.outputs.notification-worker }}
+          CHANGED_imaging:            ${{ steps.filter.outputs.imaging-service }}
+          CHANGED_diagnostic:         ${{ steps.filter.outputs.diagnostic-agent-service }}
+          CHANGED_coordinator:        ${{ steps.filter.outputs.coordinator-agent }}
+          CHANGED_image_analysis:     ${{ steps.filter.outputs.image-analysis-agent }}
+          CHANGED_patient_history:    ${{ steps.filter.outputs.patient-history-agent }}
+          CHANGED_client:             ${{ steps.filter.outputs.client }}
         run: |
-          ENV="${{ needs.resolve-env.outputs.env }}"
-          TAG="${{ needs.resolve-env.outputs.tag }}"
-          VALUES="helm/aegis-health/values-${ENV}.yaml"
+          patch_tag() {
+            local SVC="$1" CHART="$2" CHANGED="$3"
+            [ "$CHANGED" != "true" ] && return
+            local VALUES="k8s-manifests/charts/${CHART}/values-${ENV}.yaml"
+            if [ ! -f "$VALUES" ]; then
+              echo "⚠ ${VALUES} not found — skipping ${SVC}"; return
+            fi
+            sed -i "s/^  tag: \".*\"/  tag: \"${TAG}\"/" "$VALUES"
+            echo "  ✓ ${CHART}/values-${ENV}.yaml → tag=${TAG}"
+          }
 
-          sed -i "s/^  imageTag:.*/  imageTag: ${TAG}/" "${VALUES}"
-          echo "→ ${VALUES}: imageTag=${TAG}"
+          patch_tag api-gateway              api-gateway              "$CHANGED_api_gateway"
+          patch_tag health-records-service   health-records-service   "$CHANGED_health_records"
+          patch_tag medication-service       medication-service       "$CHANGED_medication"
+          patch_tag ai-service               ai-service               "$CHANGED_ai"
+          patch_tag notification-worker      notification-worker      "$CHANGED_notification"
+          patch_tag imaging-service          imaging-service          "$CHANGED_imaging"
+          patch_tag diagnostic-agent-service diagnostic-agent-service "$CHANGED_diagnostic"
+          patch_tag coordinator-agent        coordinator-agent        "$CHANGED_coordinator"
+          patch_tag image-analysis-agent     image-analysis-agent     "$CHANGED_image_analysis"
+          patch_tag patient-history-agent    patient-history-agent    "$CHANGED_patient_history"
+          patch_tag client                   client                   "$CHANGED_client"
 
-      # ── Commit the tag bump back to the repo ────────────────────────────────
-      - name: Commit manifest changes
+      # ── Commit and push to k8s-manifests ────────────────────────────────────
+      - name: Commit image tag bump to k8s-manifests
+        working-directory: k8s-manifests
+        env:
+          ENV:    ${{ needs.resolve-env.outputs.env }}
+          TAG:    ${{ needs.resolve-env.outputs.tag }}
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
         run: |
-          ENV="${{ needs.resolve-env.outputs.env }}"
-          TAG="${{ needs.resolve-env.outputs.tag }}"
-          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
-
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add "helm/aegis-health/values-${ENV}.yaml"
+          git add charts/
+          git diff --cached --quiet \
+            && echo "No image tag changes to commit." \
+            && exit 0
 
-          if git diff --cached --quiet; then
-            echo "No manifest changes to commit."
-          else
-            git commit -m "chore(deploy): bump ${ENV} imageTag to ${TAG} [${BRANCH}] [skip ci]"
-            git pull --rebase origin HEAD
-            git push
-          fi
+          git commit -m "chore(deploy): bump ${ENV} image tags to ${TAG} [${BRANCH}] [skip ci]"
+          git pull --rebase origin main
+          git push
 
       # ── Step summary ─────────────────────────────────────────────────────────
       - name: Write deploy summary

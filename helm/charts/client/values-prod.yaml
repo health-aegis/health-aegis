@@ -1,0 +1,10 @@
+replicaCount: 2
+
+image:
+  acrLoginServer: aegisprodacr.azurecr.io
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  cpuUtilization: 60

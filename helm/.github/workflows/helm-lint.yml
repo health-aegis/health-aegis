@@ -1,0 +1,171 @@
+# ---------------------------------------------------------------------------
+# Helm Chart Validation Pipeline
+#
+# Runs on every push and PR to main. No Azure credentials needed —
+# helm lint and helm template run entirely locally.
+#
+# What it checks:
+#   lint      → YAML syntax, required fields, schema violations per chart
+#   template  → renders each chart with dev values to catch template errors
+#   diff      → on PRs, posts a summary of which charts changed
+# ---------------------------------------------------------------------------
+
+name: Helm Chart Validation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
+      - 'environments/**'
+      - 'argocd/**'
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
+      - 'environments/**'
+      - 'argocd/**'
+
+jobs:
+  lint-charts:
+    name: Lint per-service charts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Lint — api-gateway
+        run: helm lint charts/api-gateway -f charts/api-gateway/values.yaml -f charts/api-gateway/values-dev.yaml
+
+      - name: Lint — health-records-service
+        run: helm lint charts/health-records-service -f charts/health-records-service/values.yaml -f charts/health-records-service/values-dev.yaml
+
+      - name: Lint — medication-service
+        run: helm lint charts/medication-service -f charts/medication-service/values.yaml -f charts/medication-service/values-dev.yaml
+
+      - name: Lint — ai-service
+        run: helm lint charts/ai-service -f charts/ai-service/values.yaml -f charts/ai-service/values-dev.yaml
+
+      - name: Lint — imaging-service
+        run: helm lint charts/imaging-service -f charts/imaging-service/values.yaml -f charts/imaging-service/values-dev.yaml
+
+      - name: Lint — diagnostic-agent-service
+        run: helm lint charts/diagnostic-agent-service -f charts/diagnostic-agent-service/values.yaml -f charts/diagnostic-agent-service/values-dev.yaml
+
+      - name: Lint — coordinator-agent
+        run: helm lint charts/coordinator-agent -f charts/coordinator-agent/values.yaml -f charts/coordinator-agent/values-dev.yaml
+
+      - name: Lint — image-analysis-agent
+        run: helm lint charts/image-analysis-agent -f charts/image-analysis-agent/values.yaml -f charts/image-analysis-agent/values-dev.yaml
+
+      - name: Lint — patient-history-agent
+        run: helm lint charts/patient-history-agent -f charts/patient-history-agent/values.yaml -f charts/patient-history-agent/values-dev.yaml
+
+      - name: Lint — notification-worker
+        run: helm lint charts/notification-worker -f charts/notification-worker/values.yaml -f charts/notification-worker/values-dev.yaml
+
+      - name: Lint — client
+        run: helm lint charts/client -f charts/client/values.yaml -f charts/client/values-dev.yaml
+
+      - name: Lint — postgres
+        run: helm lint charts/postgres -f charts/postgres/values.yaml -f charts/postgres/values-dev.yaml
+
+  template-render:
+    name: Template render (dev values)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Template — render all charts with dev values
+        run: |
+          CHARTS=(
+            api-gateway
+            health-records-service
+            medication-service
+            ai-service
+            imaging-service
+            diagnostic-agent-service
+            coordinator-agent
+            image-analysis-agent
+            patient-history-agent
+            notification-worker
+            client
+            postgres
+          )
+          for chart in "${CHARTS[@]}"; do
+            echo "────── Rendering charts/${chart} ──────"
+            helm template aegis-dev "charts/${chart}" \
+              -f "charts/${chart}/values.yaml" \
+              -f "charts/${chart}/values-dev.yaml" \
+              --namespace aegis-dev \
+              > /dev/null
+            echo "  ✓ ${chart}"
+          done
+
+  lint-environments:
+    name: Lint environment umbrella charts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Build umbrella dependencies (dev)
+        run: helm dependency build environments/dev
+
+      - name: Lint — environments/dev
+        run: helm lint environments/dev -f environments/dev/values.yaml
+
+      - name: Build umbrella dependencies (prod)
+        run: helm dependency build environments/prod
+
+      - name: Lint — environments/prod
+        run: helm lint environments/prod -f environments/prod/values.yaml
+
+  validate-argocd:
+    name: Validate ArgoCD manifests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check ArgoCD YAML syntax
+        run: |
+          FILES=$(find argocd -name "*.yaml")
+          for f in $FILES; do
+            python3 -c "import yaml, sys; list(yaml.safe_load_all(open('$f')))" \
+              && echo "  ✓ $f" \
+              || (echo "  ✗ $f — invalid YAML" && exit 1)
+          done
+
+      - name: Verify all ArgoCD apps point to k8s-manifests
+        run: |
+          BAD=$(grep -rl "health-aegis/health-aegis" argocd/ || true)
+          if [ -n "$BAD" ]; then
+            echo "ERROR: these files still point to health-aegis.git instead of k8s-manifests.git:"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "✓ All ArgoCD apps point to k8s-manifests"

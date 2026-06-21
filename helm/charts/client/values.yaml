@@ -1,0 +1,50 @@
+replicaCount: 1
+
+image:
+  acrLoginServer: aegisacraswin.azurecr.io
+  repository: client
+  pullPolicy: Always
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 80
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+hpa:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  cpuUtilization: 60
+
+probes:
+  readiness:
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 10
+    periodSeconds: 20
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+serviceAccount:
+  name: aegis-workload-identity
+
+networkPolicy:
+  enabled: true
+
+nginx:
+  apiBackendService: api-gateway-service
+  apiBackendPort: 5000

@@ -1,0 +1,19 @@
+replicaCount: 1
+
+image:
+  acrLoginServer: aegistestacr.azurecr.io
+  tag: "latest"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+hpa:
+  enabled: false
+
+env:
+  NODE_ENV: development

@@ -251,3 +251,12 @@ variable "azure_ai_key" {
   sensitive   = true
   default     = ""
 }
+
+# ---------------------------------------------------------------------------
+# Function App
+# ---------------------------------------------------------------------------
+variable "app_base_url" {
+  description = "Base URL of the Aegis web application (used in notification email links)"
+  type        = string
+  default     = "https://aegishealth.io"
+}

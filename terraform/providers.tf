@@ -25,7 +25,7 @@ terraform {
   }
 }
 
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------
 # AzureRM provider — main provider for all Azure resources
 # purge_soft_delete_on_destroy=true: ensures Key Vault soft-deleted items
 # are purged when Terraform destroys them, so the vault name can be reused

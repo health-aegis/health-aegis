@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: imaging-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "imaging-service.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "imaging-service.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
