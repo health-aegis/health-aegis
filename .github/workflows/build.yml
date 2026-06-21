@@ -228,24 +228,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Snyk CLI
+        uses: snyk/actions/setup@master
+
       - name: Install Node dependencies for Snyk
         if: matrix.lang == 'node'
         working-directory: ${{ matrix.dir }}
         run: npm ci --prefer-offline --no-audit
 
-      - name: Snyk dependency scan
-        uses: snyk/actions/node@master
+      - name: Install Python dependencies for Snyk
+        if: matrix.lang == 'python'
+        working-directory: ${{ matrix.dir }}
+        run: pip install -r requirements.txt --quiet
+
+      - name: Snyk dependency scan (Node)
         if: matrix.lang == 'node'
-        with:
-          args: --severity-threshold=high --file=${{ matrix.dir }}/package.json
+        working-directory: ${{ matrix.dir }}
+        run: snyk test --severity-threshold=high
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
       - name: Snyk dependency scan (Python)
-        uses: snyk/actions/python@master
         if: matrix.lang == 'python'
-        with:
-          args: --severity-threshold=high --file=${{ matrix.dir }}/requirements.txt
+        working-directory: ${{ matrix.dir }}
+        run: snyk test --severity-threshold=high --file=requirements.txt
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
