@@ -68,11 +68,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
 
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || format('{0}^1', github.sha) }}
           filters: |
             api-gateway:
               - 'services/api-gateway/**'

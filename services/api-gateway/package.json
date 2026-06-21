@@ -1,39 +1,42 @@
-{
-  "name": "api-gateway",
-  "version": "1.0.0",
-  "description": "API Gateway and Centralized AI Health Engine",
-  "main": "dist/index.js",
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts"
-  },
-  "dependencies": {
-    "@azure/storage-blob": "^12.32.0",
-    "@google/generative-ai": "^0.11.0",
-    "@types/bcryptjs": "^2.4.6",
-    "@types/jsonwebtoken": "^9.0.10",
-    "@types/multer": "^2.1.0",
-    "@types/socket.io": "^3.0.1",
-    "@types/uuid": "^10.0.0",
-    "bcryptjs": "^3.0.3",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "http-proxy-middleware": "^4.1.0",
-    "jsonwebtoken": "^9.0.3",
-    "jwks-rsa": "^4.0.1",
-    "mongoose": "^6.13.9",
-    "multer": "^2.1.1",
-    "socket.io": "^4.8.3",
-    "uuid": "^14.0.0"
-  },
-  "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.12.7",
-    "nodemon": "^3.1.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
-  }
+﻿{
+    "name":  "api-gateway",
+    "version":  "1.0.0",
+    "description":  "API Gateway and Centralized AI Health Engine",
+    "main":  "dist/index.js",
+    "scripts":  {
+                    "build":  "tsc",
+                    "start":  "node dist/index.js",
+                    "dev":  "nodemon --watch src --ext ts --exec ts-node src/index.ts"
+                },
+    "dependencies":  {
+                         "@azure/storage-blob":  "^12.32.0",
+                         "@google/generative-ai":  "^0.11.0",
+                         "@types/bcryptjs":  "^2.4.6",
+                         "@types/jsonwebtoken":  "^9.0.10",
+                         "@types/multer":  "^2.1.0",
+                         "@types/socket.io":  "^3.0.1",
+                         "@types/uuid":  "^10.0.0",
+                         "bcryptjs":  "^3.0.3",
+                         "cors":  "^2.8.5",
+                         "dotenv":  "^16.4.5",
+                         "express":  "^4.19.2",
+                         "http-proxy-middleware":  "^4.1.0",
+                         "jsonwebtoken":  "^9.0.3",
+                         "jwks-rsa":  "^4.0.1",
+                         "mongoose":  "^6.13.9",
+                         "multer":  "^2.2.0",
+                         "socket.io":  "^4.8.3",
+                         "uuid":  "^14.0.0"
+                     },
+    "devDependencies":  {
+                            "@types/cors":  "^2.8.17",
+                            "@types/express":  "^4.17.21",
+                            "@types/node":  "^20.12.7",
+                            "nodemon":  "^3.1.0",
+                            "ts-node":  "^10.9.2",
+                            "typescript":  "^5.4.5"
+                        },
+    "overrides":  {
+                      "ws":  "\u003e=8.21.0"
+                  }
 }
