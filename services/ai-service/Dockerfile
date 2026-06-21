@@ -14,3 +14,5 @@ EXPOSE 5003
 USER node
 
 CMD ["node", "src/index.js"]
+
+#----------------------------------
