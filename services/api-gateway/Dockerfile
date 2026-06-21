@@ -45,5 +45,7 @@ COPY --from=builder /workspace/services/api-gateway/dist ./dist
 
 EXPOSE 5000
 
+USER node
+
 # Entry point matches the TypeScript rootDir-computed output path
 CMD ["node", "dist/services/api-gateway/src/index.js"]
