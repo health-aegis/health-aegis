@@ -5,8 +5,8 @@
 #
 #   prepare
 #     ├── test  ────────────┐
-#     ├── sonar ────────────┼──► build ──► trivy ──► push ──► release ──► notify
-#     └── snyk  ────────────┘
+#     ├── sonar ────────────┼──► build ──► trivy ──► push ──► deploy (dev) ──► notify
+#     └── snyk  ────────────┘                                └──► release (main) ┘
 #
 # • prepare   — detect changed services, set image tag + push flag
 # • test      — run unit tests per changed service (matrix)
@@ -14,7 +14,8 @@
 # • snyk      — Snyk dependency vulnerability scan per changed service (matrix)
 # • build     — docker build; image saved as artifact (not pushed yet)
 # • trivy     — scan artifact image; FAILS on HIGH / CRITICAL
-# • push      — push to ACR only after Trivy passes (push events only)
+# • push      — push to ACR only after Trivy passes; pushes :latest on main + develop
+# • deploy    — kubectl rollout restart on AKS dev cluster (develop branch only)
 # • release   — GitHub Release (main branch only)
 # • notify    — email on ALL outcomes (always)
 #
@@ -411,14 +412,53 @@ jobs:
 
           docker push "${ACR}/${SVC}:${TAG}"
 
-          # Update :latest only on main branch
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          # Push :latest on main and develop (dev environment uses latest tag)
+          if [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/develop" ]; then
             docker tag "${ACR}/${SVC}:${TAG}" "${ACR}/${SVC}:latest"
             docker push "${ACR}/${SVC}:latest"
           fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 8 — RELEASE  (GitHub Release — main only, after all pushes succeed)
+# JOB 8 — DEPLOY  (develop only — rollout restart after successful push)
+# ─────────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: "Deploy — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: [prepare, push]
+    if: >
+      needs.prepare.outputs.any_changed == 'true' &&
+      needs.push.result == 'success' &&
+      github.ref == 'refs/heads/develop'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group rg-aegis-test \
+            --name aegis-test-aks \
+            --overwrite-existing
+
+      - name: Rollout restart
+        run: |
+          kubectl rollout restart deployment/${{ matrix.service }} -n aegis-dev
+          kubectl rollout status deployment/${{ matrix.service }} -n aegis-dev --timeout=180s
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 9 — RELEASE  (GitHub Release — main only, after all pushes succeed)
 # ─────────────────────────────────────────────────────────────────────────────
   release:
     name: "Release"
@@ -459,7 +499,7 @@ jobs:
   notify:
     name: "Notify"
     runs-on: ubuntu-latest
-    needs: [prepare, test, sonar, snyk, build, trivy, push, release]
+    needs: [prepare, test, sonar, snyk, build, trivy, push, deploy, release]
     if: always()
     steps:
       - name: Resolve pipeline status
