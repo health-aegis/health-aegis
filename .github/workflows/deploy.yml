@@ -118,11 +118,12 @@ jobs:
         run: echo "✅ Production deployment approved — proceeding."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 3 — UPDATE MANIFEST + APPLY
-# Detects changed services, patches kustomize image tags, commits, then applies
+# JOB 3 — UPDATE MANIFEST
+# Detects changed services, patches kustomize image tags, commits back.
+# ArgoCD watches the repo and syncs the cluster automatically.
 # ─────────────────────────────────────────────────────────────────────────────
   update-manifest:
-    name: "CD – Update manifests & deploy (${{ needs.resolve-env.outputs.env }})"
+    name: "CD – Update manifests (${{ needs.resolve-env.outputs.env }})"
     runs-on: ubuntu-latest
     needs: [resolve-env, await-approval]
 
@@ -133,7 +134,6 @@ jobs:
 
     permissions:
       contents: write
-      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -231,69 +231,6 @@ jobs:
             git pull --rebase origin HEAD
             git push
           fi
-
-      # ── Azure Login + AKS credentials ───────────────────────────────────────
-      - name: Azure Login (OIDC)
-        if: env.NOTHING_TO_DEPLOY != 'true'
-        uses: azure/login@v2
-        with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Get AKS credentials
-        if: env.NOTHING_TO_DEPLOY != 'true'
-        uses: azure/aks-set-context@v4
-        with:
-          resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
-          cluster-name:   ${{ secrets.AKS_CLUSTER_NAME }}
-
-      # ── Apply manifests to AKS ───────────────────────────────────────────────
-      - name: kubectl apply
-        if: env.NOTHING_TO_DEPLOY != 'true'
-        run: kubectl apply -k ${{ needs.resolve-env.outputs.overlay }}
-
-      # ── Rollout status ───────────────────────────────────────────────────────
-      - name: Verify rollout status
-        if: env.NOTHING_TO_DEPLOY != 'true'
-        run: |
-          NS="${{ needs.resolve-env.outputs.namespace }}"
-          FAILED=()
-
-          while IFS= read -r svc; do
-            echo "⏳ $svc"
-            if kubectl rollout status "deployment/$svc" -n "$NS" --timeout=5m; then
-              echo "✅ $svc ready"
-            else
-              echo "❌ $svc failed"
-              FAILED+=("$svc")
-            fi
-          done < /tmp/updated-services.txt
-
-          if [ ${#FAILED[@]} -gt 0 ]; then
-            kubectl get pods -n "$NS" --sort-by=.status.startTime
-            exit 1
-          fi
-
-      # ── Smoke test ───────────────────────────────────────────────────────────
-      - name: Smoke test — api-gateway /healthz
-        if: env.NOTHING_TO_DEPLOY != 'true'
-        run: |
-          NS="${{ needs.resolve-env.outputs.namespace }}"
-          grep -qx "api-gateway" /tmp/updated-services.txt 2>/dev/null || { echo "api-gateway not updated — skip"; exit 0; }
-
-          kubectl port-forward deployment/api-gateway 15000:5000 -n "$NS" &
-          PF_PID=$!
-          trap "kill $PF_PID 2>/dev/null" EXIT
-          sleep 5
-
-          for i in 1 2 3; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:15000/healthz)
-            [ "$CODE" = "200" ] && { echo "✅ /healthz → 200"; exit 0; }
-            echo "Attempt $i: $CODE — retrying"
-            sleep 5
-          done
-          echo "❌ Smoke test failed"; exit 1
 
       # ── Step summary ─────────────────────────────────────────────────────────
       - name: Write deploy summary
