@@ -10,8 +10,10 @@
 # would revert the AGIC-managed config back to the stub values below,
 # breaking all in-cluster routing.
 #
-# WAF (enable_waf = true): switches to WAF_v2 SKU with OWASP 3.2 in Prevention
-# mode — required for production. SKU tier cannot be changed after creation.
+# WAF (enable_waf = true): creates a separate azurerm_web_application_firewall_policy
+# (OWASP 3.2, Prevention mode) and attaches it via firewall_policy_id.
+# Azure retired the inline waf_configuration block — a WAF policy resource is
+# now required for WAF_v2 gateways.
 #
 # Traffic flow:
 #   Internet → Public IP → App Gateway → AKS pods
@@ -59,6 +61,9 @@ resource "azurerm_application_gateway" "this" {
   resource_group_name = var.resource_group_name
   location            = var.location
   firewall_policy_id  = var.enable_waf ? azurerm_web_application_firewall_policy.this[0].id : null
+
+  # WAF policy attached via firewall_policy_id (replaces retired waf_configuration block).
+  firewall_policy_id = var.enable_waf ? azurerm_web_application_firewall_policy.this[0].id : null
 
   sku {
     name     = var.enable_waf ? "WAF_v2" : "Standard_v2"
