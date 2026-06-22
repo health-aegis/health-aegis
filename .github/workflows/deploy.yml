@@ -1,27 +1,32 @@
 # ---------------------------------------------------------------------------
-# Aegis Health — Deploy Pipeline
+# Aegis Health — Deploy Pipeline (DEV only)
+#
+# Triggered when the Build workflow completes on the develop branch.
+# Detects which services changed, then calls common-cd.yml once per service
+# to patch k8s-manifests/environments/dev/values.yaml.
+#
+# PROD deployments use a separate semver-based release flow:
+#   → .github/workflows/release-prod.yml  (triggered by git tag v*.*.*)
 #
 # JOB GRAPH:
 #
-#   resolve-env ──► await-approval (prod only) ──► update-manifest ──► notify
+#   resolve-env
+#     ├── deploy-api-gateway          (if api-gateway changed)
+#     ├── deploy-health-records       (if health-records-service changed)
+#     ├── deploy-medication           (if medication-service changed)
+#     ├── deploy-ai                   (if ai-service changed)
+#     ├── deploy-notification         (if notification-worker changed)
+#     ├── deploy-imaging              (if imaging-service changed)
+#     ├── deploy-diagnostic           (if diagnostic-agent-service changed)
+#     ├── deploy-coordinator          (if coordinator-agent changed)
+#     ├── deploy-image-analysis       (if image-analysis-agent changed)
+#     ├── deploy-patient-history      (if patient-history-agent changed)
+#     └── deploy-client               (if client changed)
+#               └──► notify
 #
-# • resolve-env      — determines environment (dev/prod) and image tag from the
-#                      build trigger; only proceeds when Build succeeded
-# • await-approval   — pauses for a human reviewer BEFORE prod deploys
-#                      (Settings → Environments → production → Required reviewers)
-# • update-manifest  — runs kustomize edit set image for every changed service,
-#                      commits the tag bump back to the repo, then kubectl apply
-# • notify           — email on ALL outcomes (always)
-#
-# Environments:
-#   develop → dev  → k8s/dev  overlay → namespace aegis-dev
-#   main    → prod → k8s/prod overlay → namespace aegis-prod
-#
-# Required secrets (set in health-aegis repo → Settings → Secrets → Actions):
-#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  — OIDC
-#   ACR_NAME            — registry name without .azurecr.io (e.g. aegistestacr)
-#   GITOPS_PAT          — PAT with repo write on health-aegis/k8s-manifests
-#   SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO
+# Required secrets:
+#   GITOPS_PAT   — PAT with repo write on health-aegis/k8s-manifests
+#   SMTP_*       — notification email
 # ---------------------------------------------------------------------------
 
 name: Deploy
@@ -30,15 +35,15 @@ on:
   workflow_run:
     workflows: ["Build"]
     types: [completed]
-    branches: [main, develop]
+    branches: [develop]
 
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment"
+        description: "Target environment (dev only — use git tag for prod)"
         required: true
         type: choice
-        options: [dev, prod]
+        options: [dev]
         default: dev
       image_tag:
         description: "Override image tag (blank = derive from commit SHA)"
@@ -46,11 +51,11 @@ on:
         type: string
 
 concurrency:
-  group: deploy-${{ github.event.workflow_run.head_branch || inputs.environment }}
+  group: deploy-${{ github.event.workflow_run.head_branch || 'dev' }}
   cancel-in-progress: false
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 1 — RESOLVE ENV + TAG
+# JOB 1 — RESOLVE ENV + TAG + CHANGED SERVICES
 # ─────────────────────────────────────────────────────────────────────────────
 jobs:
   resolve-env:
@@ -62,90 +67,26 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
 
     outputs:
-      tag:       ${{ steps.resolve.outputs.tag }}
-      env:       ${{ steps.resolve.outputs.env }}
-      namespace: ${{ steps.resolve.outputs.namespace }}
-      overlay:   ${{ steps.resolve.outputs.overlay }}
+      tag:                     ${{ steps.out.outputs.tag }}
+      env:                     ${{ steps.out.outputs.env }}
+      changed_api_gateway:     ${{ steps.filter.outputs.api-gateway }}
+      changed_health_records:  ${{ steps.filter.outputs.health-records-service }}
+      changed_medication:      ${{ steps.filter.outputs.medication-service }}
+      changed_ai:              ${{ steps.filter.outputs.ai-service }}
+      changed_notification:    ${{ steps.filter.outputs.notification-worker }}
+      changed_imaging:         ${{ steps.filter.outputs.imaging-service }}
+      changed_diagnostic:      ${{ steps.filter.outputs.diagnostic-agent-service }}
+      changed_coordinator:     ${{ steps.filter.outputs.coordinator-agent }}
+      changed_image_analysis:  ${{ steps.filter.outputs.image-analysis-agent }}
+      changed_patient_history: ${{ steps.filter.outputs.patient-history-agent }}
+      changed_client:          ${{ steps.filter.outputs.client }}
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref:         ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
 
-      - name: Resolve environment and image tag
-        id: resolve
-        run: |
-          BRANCH="${{ github.event.workflow_run.head_branch || inputs.environment }}"
-          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
-
-          if [[ -n "${{ inputs.image_tag }}" ]]; then
-            TAG="${{ inputs.image_tag }}"
-          else
-            TAG="sha-${SHA:0:7}"
-          fi
-
-          if [[ "${BRANCH}" == "main" || "${{ inputs.environment }}" == "prod" ]]; then
-            ENV="prod"
-            NAMESPACE="aegis-prod"
-            OVERLAY="k8s/prod"
-          else
-            ENV="dev"
-            NAMESPACE="aegis-dev"
-            OVERLAY="k8s/dev"
-          fi
-
-          echo "tag=${TAG}"             >> "$GITHUB_OUTPUT"
-          echo "env=${ENV}"             >> "$GITHUB_OUTPUT"
-          echo "namespace=${NAMESPACE}" >> "$GITHUB_OUTPUT"
-          echo "overlay=${OVERLAY}"     >> "$GITHUB_OUTPUT"
-
-          echo "Resolved → env=${ENV}  tag=${TAG}  overlay=${OVERLAY}"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 2 — AWAIT APPROVAL  (prod only — skipped entirely for dev)
-# Configure required reviewers: Settings → Environments → production
-# ─────────────────────────────────────────────────────────────────────────────
-  await-approval:
-    name: "CD – Await production approval"
-    runs-on: ubuntu-latest
-    needs: resolve-env
-    if: needs.resolve-env.outputs.env == 'prod'
-    environment: production
-    steps:
-      - name: Approval granted
-        run: echo "✅ Production deployment approved — proceeding."
-
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 3 — UPDATE MANIFEST
-# Detects which services changed, then patches each service's individual
-# values-dev.yaml / values-prod.yaml image.tag in k8s-manifests.
-# ArgoCD watches k8s-manifests and syncs the cluster automatically.
-#
-# Requires secret GITOPS_PAT — a PAT with repo write scope on
-# health-aegis/k8s-manifests (same PAT used by terraform-aegis).
-# ─────────────────────────────────────────────────────────────────────────────
-  update-manifest:
-    name: "CD – Update manifests (${{ needs.resolve-env.outputs.env }})"
-    runs-on: ubuntu-latest
-    needs: [resolve-env, await-approval]
-
-    if: |
-      always() &&
-      needs.resolve-env.result == 'success' &&
-      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
-
-    permissions:
-      contents: read
-
-    steps:
-      # ── Checkout health-aegis at the triggering commit ───────────────────────
-      - uses: actions/checkout@v4
-        with:
-          ref:        ${{ github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: 0
-
-      # ── Detect which services changed in the triggering build ────────────────
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -174,115 +115,173 @@ jobs:
             client:
               - 'client/**'
 
-      # ── Checkout k8s-manifests (GitOps repo) ────────────────────────────────
-      # ArgoCD watches k8s-manifests/environments/dev — the umbrella chart.
-      # Patching <subchart>.image.tag here is what actually triggers a rollout.
-      - name: Checkout k8s-manifests
-        uses: actions/checkout@v4
-        with:
-          repository: health-aegis/k8s-manifests
-          token:      ${{ secrets.GITOPS_PAT }}
-          path:       k8s-manifests
-
-      # ── Update image tags in environments/<env>/values.yaml ─────────────────
-      # DEV:  patch only services whose source files changed (fast, per-commit).
-      # PROD: promote — copy every image.tag from dev values into prod values.
-      #       This is the GitOps promotion pattern: prod always gets exactly
-      #       what dev has already validated, regardless of which files changed
-      #       in the triggering commit. Avoids the silent no-op when only
-      #       infra/CI files changed but a prod deploy is requested.
-      # ── Patch <subchart>.image.tag in environments/dev/values.yaml ──────────
-      # This workflow only manages DEV deployments (SHA-tagged images on
-      # aegistestacr).  Prod releases use a separate semver-based flow —
-      # see .github/workflows/release-prod.yml triggered by `git tag v*`.
-      - name: Patch image tags in k8s-manifests
-        env:
-          TAG:                        ${{ needs.resolve-env.outputs.tag }}
-          ENV:                        ${{ needs.resolve-env.outputs.env }}
-          CHANGED_api_gateway:        ${{ steps.filter.outputs.api-gateway }}
-          CHANGED_health_records:     ${{ steps.filter.outputs.health-records-service }}
-          CHANGED_medication:         ${{ steps.filter.outputs.medication-service }}
-          CHANGED_ai:                 ${{ steps.filter.outputs.ai-service }}
-          CHANGED_notification:       ${{ steps.filter.outputs.notification-worker }}
-          CHANGED_imaging:            ${{ steps.filter.outputs.imaging-service }}
-          CHANGED_diagnostic:         ${{ steps.filter.outputs.diagnostic-agent-service }}
-          CHANGED_coordinator:        ${{ steps.filter.outputs.coordinator-agent }}
-          CHANGED_image_analysis:     ${{ steps.filter.outputs.image-analysis-agent }}
-          CHANGED_patient_history:    ${{ steps.filter.outputs.patient-history-agent }}
-          CHANGED_client:             ${{ steps.filter.outputs.client }}
+      - name: Resolve tag and environment
+        id: out
         run: |
-          if [ "$ENV" = "prod" ]; then
-            echo "ℹ Prod deploys are handled by release-prod.yml (semver tags)."
-            echo "  To deploy to prod, create a git tag: git tag v1.2.3 && git push origin v1.2.3"
-            exit 0
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          TAG="${{ inputs.image_tag || format('sha-{0}', '') }}"
+          if [ -z "${{ inputs.image_tag }}" ]; then
+            TAG="sha-${SHA:0:7}"
           fi
-
-          VALUES="k8s-manifests/environments/${ENV}/values.yaml"
-          if [ ! -f "$VALUES" ]; then
-            echo "⚠ ${VALUES} not found — nothing to patch"; exit 0
-          fi
-
-          patch_tag() {
-            local SVC="$1" CHANGED="$2"
-            [ "$CHANGED" != "true" ] && return
-            yq -i ".\"${SVC}\".image.tag = \"${TAG}\"" "${VALUES}"
-            echo "  ✓ ${SVC}.image.tag → ${TAG}"
-          }
-
-          patch_tag api-gateway              "$CHANGED_api_gateway"
-          patch_tag health-records-service   "$CHANGED_health_records"
-          patch_tag medication-service       "$CHANGED_medication"
-          patch_tag ai-service               "$CHANGED_ai"
-          patch_tag notification-worker      "$CHANGED_notification"
-          patch_tag imaging-service          "$CHANGED_imaging"
-          patch_tag diagnostic-agent-service "$CHANGED_diagnostic"
-          patch_tag coordinator-agent        "$CHANGED_coordinator"
-          patch_tag image-analysis-agent     "$CHANGED_image_analysis"
-          patch_tag patient-history-agent    "$CHANGED_patient_history"
-          patch_tag client                   "$CHANGED_client"
-
-      # ── Commit and push to k8s-manifests ────────────────────────────────────
-      - name: Commit image tag bump to k8s-manifests
-        working-directory: k8s-manifests
-        env:
-          ENV:    ${{ needs.resolve-env.outputs.env }}
-          TAG:    ${{ needs.resolve-env.outputs.tag }}
-          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add environments/
-          git diff --cached --quiet \
-            && echo "No image tag changes to commit." \
-            && exit 0
-
-          git commit -m "chore(deploy): bump ${ENV} image tags to ${TAG} [${BRANCH}] [skip ci]"
-          git fetch origin main
-          git rebase origin/main
-          git push origin HEAD:main
-
-      # ── Step summary ─────────────────────────────────────────────────────────
-      - name: Write deploy summary
-        if: always()
-        run: |
-          {
-            echo "## Deploy — \`${{ needs.resolve-env.outputs.env }}\` — \`${{ job.status }}\`"
-            echo ""
-            echo "| | |"
-            echo "|---|---|"
-            echo "| **Tag** | \`${{ needs.resolve-env.outputs.tag }}\` |"
-            echo "| **Namespace** | \`${{ needs.resolve-env.outputs.namespace }}\` |"
-            echo "| **Actor** | \`${{ github.actor }}\` |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "env=dev"    >> "$GITHUB_OUTPUT"
+          echo "Resolved → env=dev  tag=${TAG}"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 4 — NOTIFY  (always)
+# JOBS 2–12 — PER-SERVICE CD  (calls common-cd.yml, skipped if not changed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+  deploy-api-gateway:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_api_gateway == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   api-gateway
+      helm-chart-key: api-gateway
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+  deploy-health-records:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_health_records == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   health-records-service
+      helm-chart-key: health-records-service
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+  deploy-medication:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_medication == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   medication-service
+      helm-chart-key: medication-service
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+  deploy-ai:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_ai == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   ai-service
+      helm-chart-key: ai-service
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+  deploy-notification:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_notification == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   notification-worker
+      helm-chart-key: notification-worker
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+  deploy-imaging:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_imaging == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   imaging-service
+      helm-chart-key: imaging-service
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+  deploy-diagnostic:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_diagnostic == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   diagnostic-agent-service
+      helm-chart-key: diagnostic-agent-service
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+  deploy-coordinator:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_coordinator == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   coordinator-agent
+      helm-chart-key: coordinator-agent
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+  deploy-image-analysis:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_image_analysis == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   image-analysis-agent
+      helm-chart-key: image-analysis-agent
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+  deploy-patient-history:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_patient_history == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   patient-history-agent
+      helm-chart-key: patient-history-agent
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+  deploy-client:
+    needs: resolve-env
+    if: needs.resolve-env.outputs.changed_client == 'true'
+    uses: ./.github/workflows/common-cd.yml
+    with:
+      service-name:   client
+      helm-chart-key: client
+      env:            ${{ needs.resolve-env.outputs.env }}
+      tag:            ${{ needs.resolve-env.outputs.tag }}
+    secrets:
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 13 — NOTIFY  (always)
 # ─────────────────────────────────────────────────────────────────────────────
   notify:
     name: "Notify"
     runs-on: ubuntu-latest
-    needs: [resolve-env, await-approval, update-manifest]
+    needs:
+      - resolve-env
+      - deploy-api-gateway
+      - deploy-health-records
+      - deploy-medication
+      - deploy-ai
+      - deploy-notification
+      - deploy-imaging
+      - deploy-diagnostic
+      - deploy-coordinator
+      - deploy-image-analysis
+      - deploy-patient-history
+      - deploy-client
     if: always()
     steps:
       - name: Resolve status
@@ -305,13 +304,13 @@ jobs:
           password:       ${{ secrets.SMTP_PASSWORD }}
           to:             ${{ secrets.EMAIL_TO }}
           from:           Aegis CD <${{ secrets.SMTP_USERNAME }}>
-          subject:        "${{ steps.status.outputs.emoji }} [Aegis Deploy] ${{ steps.status.outputs.value }} — ${{ needs.resolve-env.outputs.env }} ${{ needs.resolve-env.outputs.tag }}"
+          subject:        "${{ steps.status.outputs.emoji }} [Aegis Deploy] ${{ steps.status.outputs.value }} — dev ${{ needs.resolve-env.outputs.tag }}"
           body: |
             Aegis Health — Deploy Pipeline
 
             Status      : ${{ steps.status.outputs.value }}
-            Environment : ${{ needs.resolve-env.outputs.env }}
+            Environment : dev
             Tag         : ${{ needs.resolve-env.outputs.tag }}
-            Namespace   : ${{ needs.resolve-env.outputs.namespace }}
+            Namespace   : aegis-dev
             Actor       : ${{ github.actor }}
             Run         : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
