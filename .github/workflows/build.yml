@@ -97,7 +97,7 @@ jobs:
               - 'services/notification-worker/**'
             imaging-service:
               - 'services/imaging-service/**'
-            diagnostic-agent:
+            diagnostic-agent-service:
               - 'services/diagnostic-agent-service/**'
             coordinator-agent:
               - 'services/coordinator-agent/**'
@@ -144,8 +144,8 @@ jobs:
           [[ "${{ steps.filter.outputs.imaging-service }}" == "true" ]] && svc+=(
             '{"service":"imaging-service","context":"services/imaging-service","dockerfile":"services/imaging-service/Dockerfile","lang":"python","dir":"services/imaging-service","sonar_key":"health-aegis_imaging-service"}'
           )
-          [[ "${{ steps.filter.outputs.diagnostic-agent }}" == "true" ]] && svc+=(
-            '{"service":"diagnostic-agent","context":"services/diagnostic-agent-service","dockerfile":"services/diagnostic-agent-service/Dockerfile","lang":"python","dir":"services/diagnostic-agent-service","sonar_key":"health-aegis_diagnostic-agent"}'
+          [[ "${{ steps.filter.outputs.diagnostic-agent-service }}" == "true" ]] && svc+=(
+            '{"service":"diagnostic-agent-service","context":"services/diagnostic-agent-service","dockerfile":"services/diagnostic-agent-service/Dockerfile","lang":"python","dir":"services/diagnostic-agent-service","sonar_key":"health-aegis_diagnostic-agent-service"}'
           )
           [[ "${{ steps.filter.outputs.coordinator-agent }}" == "true" ]] && svc+=(
             '{"service":"coordinator-agent","context":"services/coordinator-agent","dockerfile":"services/coordinator-agent/Dockerfile","lang":"python","dir":"services/coordinator-agent","sonar_key":"health-aegis_coordinator-agent"}'
