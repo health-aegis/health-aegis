@@ -117,20 +117,14 @@ jobs:
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             # ── Auto-generate next semver tag ─────────────────────────────────
-            # Find the latest vX.Y.Z tag reachable from HEAD
             git fetch --tags --quiet
             LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
             echo "Latest tag: ${LATEST}"
 
-            # Parse current version
-            MAJOR=$(echo "${LATEST}" | sed 's/v//' | cut -d. -f1)
-            MINOR=$(echo "${LATEST}" | sed 's/v//' | cut -d. -f2)
-            PATCH=$(echo "${LATEST}" | sed 's/v//' | cut -d. -f3)
+            MAJOR=$(echo "${LATEST#v}" | cut -d. -f1)
+            MINOR=$(echo "${LATEST#v}" | cut -d. -f2)
+            PATCH=$(echo "${LATEST#v}" | cut -d. -f3)
 
-            # Scan commit messages since last tag to determine bump type
-            # BREAKING CHANGE or feat!: → major
-            # feat:                     → minor
-            # fix: / chore: / etc.      → patch
             COMMITS=$(git log "${LATEST}..HEAD" --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
             if echo "${COMMITS}" | grep -qE "(BREAKING CHANGE|^.+!:)"; then
               NEXT="v$((MAJOR + 1)).0.0"
@@ -140,17 +134,27 @@ jobs:
               NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
             fi
 
-            echo "Auto-versioning: ${LATEST} → ${NEXT}"
-            git tag "${NEXT}"
-            git push origin "${NEXT}"
+            # Set TAG first so it is always assigned before any git operation
             TAG="${NEXT}"
+            echo "Auto-versioning: ${LATEST} → ${TAG}"
+
+            # Create local tag (tolerate "already exists" on re-runs)
+            git tag "${TAG}" 2>/dev/null || echo "ℹ Tag ${TAG} already exists locally"
+            # Push to remote; if it fails (concurrent run already pushed) continue
+            git push origin "${TAG}" || echo "⚠ Tag ${TAG} already on remote — reusing"
           else
             # develop → immutable SHA tag
             TAG="sha-${GITHUB_SHA:0:7}"
           fi
 
-          echo "tag=${TAG}"                                                        >> "$GITHUB_OUTPUT"
-          echo "push=${{ github.event_name == 'push' && 'true' || 'false' }}"    >> "$GITHUB_OUTPUT"
+          # Safety net: never emit an empty tag
+          if [ -z "${TAG}" ]; then
+            TAG="sha-${GITHUB_SHA:0:7}"
+            echo "⚠ TAG was empty — falling back to SHA: ${TAG}"
+          fi
+
+          echo "tag=${TAG}"  >> "$GITHUB_OUTPUT"
+          echo "push=${{ github.event_name == 'push' && 'true' || 'false' }}" >> "$GITHUB_OUTPUT"
 
       - name: Build service matrix
         id: matrix
@@ -448,17 +452,18 @@ jobs:
 
       - name: Push image
         run: |
-          # main  → prod ACR (PROD_ACR_NAME) with semver tag
-          # other → dev ACR  (ACR_NAME)      with sha tag
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            ACR="${{ secrets.PROD_ACR_NAME }}.azurecr.io"
-          else
-            ACR="${{ secrets.ACR_NAME }}.azurecr.io"
-          fi
           SVC="${{ matrix.service }}"
           TAG="${{ needs.prepare.outputs.tag }}"
+          DEV_ACR="${{ secrets.ACR_NAME }}.azurecr.io"
 
-          docker push "${ACR}/${SVC}:${TAG}"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            # Re-tag from dev ACR name (used during build) to prod ACR name
+            PROD_ACR="${{ secrets.PROD_ACR_NAME }}.azurecr.io"
+            docker tag "${DEV_ACR}/${SVC}:${TAG}" "${PROD_ACR}/${SVC}:${TAG}"
+            docker push "${PROD_ACR}/${SVC}:${TAG}"
+          else
+            docker push "${DEV_ACR}/${SVC}:${TAG}"
+          fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB 8 — RELEASE  (GitHub Release — main only, after all pushes succeed)
