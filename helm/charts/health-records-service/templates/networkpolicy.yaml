@@ -18,6 +18,8 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: api-gateway
+        - ipBlock:
+            cidr: {{ .Values.networkPolicy.appGatewaySubnetCidr | default "10.1.30.0/24" }}
       ports:
         - protocol: TCP
           port: 5001
