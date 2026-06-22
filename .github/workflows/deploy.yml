@@ -184,11 +184,10 @@ jobs:
           token:      ${{ secrets.GITOPS_PAT }}
           path:       k8s-manifests
 
-      # ── Patch .image.tag in charts/<service>/values-<env>.yaml ──────────────
-      # Each ArgoCD Application reads charts/<svc>/values.yaml (base) +
-      # charts/<svc>/values-<env>.yaml (env overrides including image.tag).
-      # sync-helm-charts.yml keeps static config (resources, HPA, acrLoginServer)
-      # in sync; we only update .image.tag here so AGIC/ArgoCD picks up the rollout.
+      # ── Patch <subchart>.image.tag in environments/<env>/values.yaml ─────────
+      # ArgoCD deploys the umbrella chart at environments/<env>/ which includes
+      # all services as Helm dependencies (file://../../charts/<svc>).
+      # Image tags live at .<svc>.image.tag in the umbrella values.yaml.
       - name: Patch image tags in k8s-manifests
         env:
           TAG:                        ${{ needs.resolve-env.outputs.tag }}
@@ -205,14 +204,15 @@ jobs:
           CHANGED_patient_history:    ${{ steps.filter.outputs.patient-history-agent }}
           CHANGED_client:             ${{ steps.filter.outputs.client }}
         run: |
+          VALUES="k8s-manifests/environments/${ENV}/values.yaml"
+          if [ ! -f "$VALUES" ]; then
+            echo "⚠ ${VALUES} not found — nothing to patch"; exit 0
+          fi
+
           patch_tag() {
             local SVC="$1" CHANGED="$2"
             [ "$CHANGED" != "true" ] && return
-            local VALUES="k8s-manifests/charts/${SVC}/values-${ENV}.yaml"
-            if [ ! -f "$VALUES" ]; then
-              echo "  ⚠ ${VALUES} not found — skipping ${SVC} (run sync-helm-charts first)"; return
-            fi
-            yq -i ".image.tag = \"${TAG}\"" "${VALUES}"
+            yq -i ".\"${SVC}\".image.tag = \"${TAG}\"" "${VALUES}"
             echo "  ✓ ${SVC}.image.tag → ${TAG}"
           }
 
@@ -239,7 +239,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add charts/
+          git add environments/
           git diff --cached --quiet \
             && echo "No image tag changes to commit." \
             && exit 0
