@@ -89,6 +89,7 @@ export const missMedication = async (req: Request, res: Response) => {
     if (caregiver && med.missedCount >= caregiver.alertThreshold) {
       let status = await SystemStatusModel.findOne({ userId: req.userId });
       if (!status) status = new SystemStatusModel({ userId: req.userId });
+      if (status.caregiverAlerted) return res.json(med);
       status.caregiverAlerted = true;
       status.alertReason = `Patient missed ${med.name} (${med.dosage}) ${med.missedCount} consecutive times. Threshold: ${caregiver.alertThreshold}.`;
       status.lastNotificationSent = new Date().toISOString();
