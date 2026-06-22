@@ -50,10 +50,11 @@ if AZURE_AI_KEY and AZURE_AI_ENDPOINT:
     try:
         # Use openai.OpenAI with base_url — matches Azure AI Foundry project endpoint
         # pattern (no api_version needed, works with /api/projects/... endpoints).
+        # Azure AI Foundry project endpoints expose the Responses API (not Chat
+        # Completions). No api-version query param needed for the Responses API.
         ai_client = OpenAI(
             base_url=AZURE_AI_ENDPOINT,
             api_key=AZURE_AI_KEY,
-            default_query={"api-version": "2025-01-01-preview"},
         )
         ai_ready = True
         print(f"✅ [coordinator-agent] Azure AI Foundry configured → {AZURE_AI_ENDPOINT}")
@@ -232,13 +233,13 @@ def call_ai(prompt: str) -> tuple[str, str]:
     last_error = None
     for model_name in AI_MODELS:
         try:
-            response = ai_client.chat.completions.create(
+            # Azure AI Foundry project endpoints use the Responses API.
+            response = ai_client.responses.create(
                 model=model_name,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=600,
-                temperature=0.4,
+                input=prompt,
+                max_output_tokens=600,
             )
-            text = response.choices[0].message.content
+            text = response.output_text
             if text and text.strip():
                 print(f"✅ [coordinator-agent] Azure AI response via {model_name}")
                 return text, model_name
