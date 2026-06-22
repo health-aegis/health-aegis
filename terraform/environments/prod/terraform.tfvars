@@ -30,7 +30,7 @@ environment         = "prod"
 workload_name       = "aegis"
 owner               = "aegis-prod-team"
 resource_group_name = "rg-aegis-prod"
-location            = "centralindia"
+location            = "eastus"
 
 # ── Networking ────────────────────────────────────────────────────────────────
 # Separate CIDR range from test (10.1.x.x) to allow VNet peering if needed
