@@ -27,10 +27,38 @@ resource "azurerm_public_ip" "appgw" {
   tags                = var.tags
 }
 
+# Azure retired the inline waf_configuration block on Application Gateway.
+# WAF must now be a separate azurerm_web_application_firewall_policy resource
+# attached via firewall_policy_id.
+resource "azurerm_web_application_firewall_policy" "this" {
+  count               = var.enable_waf ? 1 : 0
+  name                = "${var.name}-waf-policy"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
+  policy_settings {
+    enabled                     = true
+    mode                        = "Prevention"
+    request_body_check          = true
+    max_request_body_size_in_kb = 128
+    file_upload_limit_in_mb     = 100
+  }
+
+  managed_rules {
+    managed_rule_set {
+      type    = "OWASP"
+      version = "3.2"
+    }
+  }
+
+  tags = var.tags
+}
+
 resource "azurerm_application_gateway" "this" {
   name                = var.name
   resource_group_name = var.resource_group_name
   location            = var.location
+  firewall_policy_id  = var.enable_waf ? azurerm_web_application_firewall_policy.this[0].id : null
 
   sku {
     name     = var.enable_waf ? "WAF_v2" : "Standard_v2"
@@ -41,18 +69,6 @@ resource "azurerm_application_gateway" "this" {
   ssl_policy {
     policy_type = "Predefined"
     policy_name = "AppGwSslPolicy20220101"
-  }
-
-  # WAF configuration — only active when enable_waf = true (WAF_v2 SKU).
-  # OWASP 3.2 in Prevention mode blocks malicious requests rather than just logging.
-  dynamic "waf_configuration" {
-    for_each = var.enable_waf ? [1] : []
-    content {
-      enabled          = true
-      firewall_mode    = "Prevention"
-      rule_set_type    = "OWASP"
-      rule_set_version = "3.2"
-    }
   }
 
   gateway_ip_configuration {
@@ -112,7 +128,6 @@ resource "azurerm_application_gateway" "this" {
       redirect_configuration,
       ssl_certificate,
       url_path_map,
-      waf_configuration,
       tags,
     ]
   }
