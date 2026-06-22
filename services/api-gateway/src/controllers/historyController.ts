@@ -36,8 +36,12 @@ export const updateHistory = async (req: Request, res: Response) => {
 
 export const deleteHistory = async (req: Request, res: Response) => {
   try {
-    const deleted = await MedicalRecordModel.findOneAndDelete({ _id: req.params.id, userId: req.userId });
-    if (!deleted) return res.status(404).json({ error: 'Record not found' });
+    const record = await MedicalRecordModel.findById(req.params.id);
+    if (!record) return res.status(404).json({ error: 'Record not found' });
+    if (record.userId?.toString() !== req.userId?.toString()) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+    await MedicalRecordModel.findByIdAndDelete(req.params.id);
     res.json({ message: 'Medical record deleted' });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
