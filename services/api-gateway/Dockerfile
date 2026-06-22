@@ -29,7 +29,7 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-RUN apk update && apk upgrade --no-cache
+RUN apk update && apk upgrade --no-cache && npm install -g npm@latest
 
 ENV NODE_ENV=production
 ENV PORT=5000
