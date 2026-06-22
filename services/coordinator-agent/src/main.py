@@ -55,6 +55,7 @@ if AZURE_AI_KEY and AZURE_AI_ENDPOINT:
         ai_client = ChatCompletionsClient(
             endpoint=AZURE_AI_ENDPOINT,
             credential=AzureKeyCredential(AZURE_AI_KEY),
+            api_version="2025-01-01-preview",
         )
         ai_ready = True
         print(f"✅ [coordinator-agent] Azure AI Foundry configured → {AZURE_AI_ENDPOINT}")
