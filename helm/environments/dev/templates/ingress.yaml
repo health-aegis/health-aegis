@@ -4,14 +4,11 @@ kind: Ingress
 metadata:
   name: aegis-ingress
   namespace: {{ .Release.Namespace }}
-<<<<<<< HEAD
-=======
-  annotations:
->>>>>>> 471b619b5798dfc15e0093ac3052cd08df6a967b
 spec:
   ingressClassName: azure-application-gateway
   rules:
-    - http:
+    - host: {{ .Values.ingress.host }}
+      http:
         paths:
           - path: /api/history
             pathType: Prefix
