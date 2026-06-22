@@ -1,6 +1,10 @@
 import { MedicationModel, CaregiverModel, SystemStatusModel } from '../models/models';
 import { formatDate, formatTime } from '../utils/helpers';
 import { sendMissedDoseAlert } from './emailService';
+import { ServiceBusClient } from '@azure/service-bus';
+
+const SB_CONN = process.env.AZURE_SERVICE_BUS_CONNECTION_STRING || '';
+const QUEUE_NAME = 'notifications';
 
 export async function runWorkerCycle(): Promise<void> {
   try {
@@ -87,7 +91,8 @@ async function processUserCycle(
             console.warn(`[Worker][User:${userId}] ⚠️ THRESHOLD REACHED — sending caregiver email alert.`);
 
             if (caregiver?.email) {
-              const emailSent = await sendMissedDoseAlert({
+              const payload = {
+                type: 'missed_dose_alert',
                 caregiverName: caregiver.name,
                 caregiverEmail: caregiver.email,
                 patientUserId: String(userId),
@@ -96,16 +101,29 @@ async function processUserCycle(
                 missedCount: med.missedCount,
                 alertThreshold,
                 alertReason: reason,
-              });
+              };
+
+              // Publish to Service Bus if available, else send email directly
+              if (SB_CONN) {
+                const sbClient = new ServiceBusClient(SB_CONN);
+                const sender = sbClient.createSender(QUEUE_NAME);
+                try {
+                  await sender.sendMessages({ body: payload, contentType: 'application/json' });
+                  console.log(`[Worker][User:${userId}] Alert queued → Service Bus`);
+                } finally {
+                  await sender.close();
+                  await sbClient.close();
+                }
+              } else {
+                const emailSent = await sendMissedDoseAlert(payload);
+                console.log(`[Worker][User:${userId}] Alert sent=${emailSent} → ${caregiver.name} <${caregiver.email}>`);
+              }
 
               statusDoc.caregiverAlerted = true;
               statusDoc.alertReason = reason;
               statusDoc.lastNotificationSent = now.toISOString();
-              console.log(
-                `[Worker][User:${userId}] Alert sent=${emailSent} → ${caregiver.name} <${caregiver.email}>`
-              );
             } else {
-              console.warn(`[Worker][User:${userId}] No caregiver email on file — skipping email.`);
+              console.warn(`[Worker][User:${userId}] No caregiver email on file — skipping alert.`);
             }
           }
         }

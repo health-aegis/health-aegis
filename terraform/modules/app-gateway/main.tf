@@ -29,8 +29,9 @@ resource "azurerm_public_ip" "appgw" {
   tags                = var.tags
 }
 
-# WAF policy — created only when enable_waf = true.
-# Azure requires a policy resource for WAF_v2; inline waf_configuration is retired.
+# Azure retired the inline waf_configuration block on Application Gateway.
+# WAF must now be a separate azurerm_web_application_firewall_policy resource
+# attached via firewall_policy_id.
 resource "azurerm_web_application_firewall_policy" "this" {
   count               = var.enable_waf ? 1 : 0
   name                = "${var.name}-waf-policy"
@@ -59,6 +60,7 @@ resource "azurerm_application_gateway" "this" {
   name                = var.name
   resource_group_name = var.resource_group_name
   location            = var.location
+  firewall_policy_id  = var.enable_waf ? azurerm_web_application_firewall_policy.this[0].id : null
 
   # WAF policy attached via firewall_policy_id (replaces retired waf_configuration block).
   firewall_policy_id = var.enable_waf ? azurerm_web_application_firewall_policy.this[0].id : null

@@ -16,6 +16,8 @@ spec:
   ingress:
     - from:
         - namespaceSelector: {}
+        - ipBlock:
+            cidr: {{ .Values.networkPolicy.appGatewaySubnetCidr | default "10.1.30.0/24" }}
       ports:
         - protocol: TCP
           port: 80

@@ -261,7 +261,18 @@ module "communication" {
 }
 
 # ---------------------------------------------------------------------------
-# 13. Key Vault — central secret store
+# 13. Service Bus — async messaging for notification pipeline
+# ---------------------------------------------------------------------------
+module "service_bus" {
+  source              = "./modules/service-bus"
+  namespace_name      = "${local.prefix}-bus"
+  resource_group_name = module.resource_group.name
+  location            = module.resource_group.location
+  tags                = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# 14. Key Vault — central secret store
 #
 # Created last because it stores connection strings and keys from all other
 # modules. All secrets are stored here and read by pods via the Secrets Store
@@ -300,6 +311,7 @@ module "key_vault" {
     "kv-docai-endpoint"     = module.doc_intelligence.endpoint
     "kv-docai-key"          = module.doc_intelligence.primary_key
     "kv-comm-conn-string"   = module.communication.primary_connection_string
+    "kv-servicebus-conn"    = module.service_bus.primary_connection_string
   }
 
   depends_on = [
@@ -310,6 +322,7 @@ module "key_vault" {
     module.workload_identity,
     module.doc_intelligence,
     module.communication,
+    module.service_bus,
   ]
 }
 

@@ -59,6 +59,10 @@ jobs:
   prepare:
     name: "Prepare"
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # needed to push the auto-generated semver tag on main
+
     outputs:
       tag:         ${{ steps.out.outputs.tag }}
       push:        ${{ steps.out.outputs.push }}
@@ -68,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Resolve base SHA
         id: base
@@ -111,8 +115,46 @@ jobs:
       - name: Set tag and push flag
         id: out
         run: |
-          echo "tag=sha-${GITHUB_SHA:0:7}"                                        >> "$GITHUB_OUTPUT"
-          echo "push=${{ github.event_name == 'push' && 'true' || 'false' }}"    >> "$GITHUB_OUTPUT"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            # ── Auto-generate next semver tag ─────────────────────────────────
+            git fetch --tags --quiet
+            LATEST=$(git describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null || echo "v0.0.0")
+            echo "Latest tag: ${LATEST}"
+
+            MAJOR=$(echo "${LATEST#v}" | cut -d. -f1)
+            MINOR=$(echo "${LATEST#v}" | cut -d. -f2)
+            PATCH=$(echo "${LATEST#v}" | cut -d. -f3)
+
+            COMMITS=$(git log "${LATEST}..HEAD" --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
+            if echo "${COMMITS}" | grep -qE "(BREAKING CHANGE|^.+!:)"; then
+              NEXT="v$((MAJOR + 1)).0.0"
+            elif echo "${COMMITS}" | grep -qE "^feat(\(.+\))?:"; then
+              NEXT="v${MAJOR}.$((MINOR + 1)).0"
+            else
+              NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+            fi
+
+            # Set TAG first so it is always assigned before any git operation
+            TAG="${NEXT}"
+            echo "Auto-versioning: ${LATEST} → ${TAG}"
+
+            # Create local tag (tolerate "already exists" on re-runs)
+            git tag "${TAG}" 2>/dev/null || echo "ℹ Tag ${TAG} already exists locally"
+            # Push to remote; if it fails (concurrent run already pushed) continue
+            git push origin "${TAG}" || echo "⚠ Tag ${TAG} already on remote — reusing"
+          else
+            # develop → immutable SHA tag
+            TAG="sha-${GITHUB_SHA:0:7}"
+          fi
+
+          # Safety net: never emit an empty tag
+          if [ -z "${TAG}" ]; then
+            TAG="sha-${GITHUB_SHA:0:7}"
+            echo "⚠ TAG was empty — falling back to SHA: ${TAG}"
+          fi
+
+          echo "tag=${TAG}"  >> "$GITHUB_OUTPUT"
+          echo "push=${{ github.event_name == 'push' && 'true' || 'false' }}" >> "$GITHUB_OUTPUT"
 
       - name: Build service matrix
         id: matrix
@@ -405,17 +447,10 @@ jobs:
 
       - name: Push image
         run: |
+          # Both dev and prod use the same ACR (aegistestacr).
+          # dev images carry sha-XXXXXXX tags; prod images carry vX.Y.Z semver tags.
           ACR="${{ secrets.ACR_NAME }}.azurecr.io"
-          SVC="${{ matrix.service }}"
-          TAG="${{ needs.prepare.outputs.tag }}"
-
-          docker push "${ACR}/${SVC}:${TAG}"
-
-          # Push :latest on main and develop (dev environment uses latest tag)
-          if [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/develop" ]; then
-            docker tag "${ACR}/${SVC}:${TAG}" "${ACR}/${SVC}:latest"
-            docker push "${ACR}/${SVC}:latest"
-          fi
+          docker push "${ACR}/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB 8 — RELEASE  (GitHub Release — main only, after all pushes succeed)

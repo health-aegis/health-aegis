@@ -12,12 +12,20 @@ export const getCaregiver = async (req: Request, res: Response) => {
 
 export const updateCaregiver = async (req: Request, res: Response) => {
   try {
+    const body = { ...req.body };
+    // JSON serialises NaN as null; guard against null/NaN threshold before Mongoose validates
+    if (body.alertThreshold == null || Number.isNaN(Number(body.alertThreshold))) {
+      body.alertThreshold = 2;
+    } else {
+      body.alertThreshold = Number(body.alertThreshold);
+    }
+
     let caregiver = await CaregiverModel.findOne({ userId: req.userId });
     if (caregiver) {
-      Object.assign(caregiver, req.body);
+      Object.assign(caregiver, body);
       await caregiver.save();
     } else {
-      caregiver = new CaregiverModel({ ...req.body, userId: req.userId });
+      caregiver = new CaregiverModel({ ...body, userId: req.userId });
       await caregiver.save();
     }
     res.json(caregiver);

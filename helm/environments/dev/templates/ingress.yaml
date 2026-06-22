@@ -4,57 +4,12 @@ kind: Ingress
 metadata:
   name: aegis-ingress
   namespace: {{ .Release.Namespace }}
-<<<<<<< HEAD
-=======
-  annotations:
->>>>>>> 471b619b5798dfc15e0093ac3052cd08df6a967b
 spec:
   ingressClassName: azure-application-gateway
   rules:
-    - http:
+    - host: {{ .Values.ingress.host }}
+      http:
         paths:
-          - path: /api/history
-            pathType: Prefix
-            backend:
-              service:
-                name: health-records-service
-                port:
-                  number: 5001
-          - path: /api/appointments
-            pathType: Prefix
-            backend:
-              service:
-                name: health-records-service
-                port:
-                  number: 5001
-          - path: /api/medications
-            pathType: Prefix
-            backend:
-              service:
-                name: medication-service
-                port:
-                  number: 5002
-          - path: /api/caregiver
-            pathType: Prefix
-            backend:
-              service:
-                name: medication-service
-                port:
-                  number: 5002
-          - path: /api/status
-            pathType: Prefix
-            backend:
-              service:
-                name: medication-service
-                port:
-                  number: 5002
-          - path: /api/ai
-            pathType: Prefix
-            backend:
-              service:
-                name: ai-service
-                port:
-                  number: 5003
           - path: /api
             pathType: Prefix
             backend:

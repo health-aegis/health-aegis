@@ -6,10 +6,10 @@
 
 # ── Shared infrastructure ──────────────────────────────────────────────
 workloadIdentity:
-  clientId: ""  # set after prod terraform apply
+  clientId: "2ae07dc6-82dc-4b66-b0c1-c7bf9c974d88"
 
 keyVault:
-  name: aegis-kv-prod
+  name: aegis-kv-test
   tenantId: "3076b773-f5d9-413e-9564-7deaa3d0d7b7"
   secrets:
     - kvName: kv-mongodb-uri
@@ -30,6 +30,10 @@ keyVault:
       key: AZURE_AI_KEY
     - kvName: kv-appinsights-conn
       key: APPLICATIONINSIGHTS_CONNECTION_STRING
+    - kvName: kv-servicebus-conn
+      key: AZURE_SERVICE_BUS_CONNECTION_STRING
+    - kvName: kv-comm-conn-string
+      key: AZURE_COMM_CONNECTION_STRING
 
 config:
   PORT: "5000"
@@ -44,15 +48,17 @@ config:
   NODE_ENV: "production"
   LOG_LEVEL: "info"
   CORS_ORIGIN: "*"
+  ACS_SENDER_ADDRESS: ""
 
 ingress:
   enabled: true
+  host: ageis-prod.b4n3xus.in
 
 # ── Sub-chart overrides ────────────────────────────────────────────────
 api-gateway:
   replicaCount: 2
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:
@@ -73,7 +79,7 @@ api-gateway:
 health-records-service:
   replicaCount: 2
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:
@@ -94,7 +100,7 @@ health-records-service:
 medication-service:
   replicaCount: 2
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:
@@ -115,7 +121,7 @@ medication-service:
 ai-service:
   replicaCount: 1
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:
@@ -136,7 +142,7 @@ ai-service:
 imaging-service:
   replicaCount: 1
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:
@@ -157,7 +163,7 @@ imaging-service:
 diagnostic-agent-service:
   replicaCount: 1
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:
@@ -178,7 +184,7 @@ diagnostic-agent-service:
 coordinator-agent:
   replicaCount: 1
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:
@@ -199,7 +205,7 @@ coordinator-agent:
 image-analysis-agent:
   replicaCount: 1
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:
@@ -220,7 +226,7 @@ image-analysis-agent:
 patient-history-agent:
   replicaCount: 1
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:
@@ -241,7 +247,7 @@ patient-history-agent:
 notification-worker:
   replicaCount: 1
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:
@@ -256,7 +262,7 @@ notification-worker:
 client:
   replicaCount: 2
   image:
-    acrLoginServer: aegisprodacr.azurecr.io
+    acrLoginServer: aegistestacr.azurecr.io
     tag: "latest"
   resources:
     requests:

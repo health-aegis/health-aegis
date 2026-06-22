@@ -1,0 +1,326 @@
+# ---------------------------------------------------------------------------
+# Aegis Health — Production Release Pipeline
+#
+# Triggered by a semver git tag (v1.2.3).  Builds all service images,
+# pushes them to the prod ACR (aegisprodacr.azurecr.io) tagged with the
+# release version, waits for a human reviewer, then patches
+# k8s-manifests/environments/prod/values.yaml so ArgoCD picks it up.
+#
+# JOB GRAPH:
+#
+#   prepare ──► build ──► trivy ──► await-approval ──► push-prod ──► update-manifest ──► notify
+#
+# Required secrets:
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  — OIDC (must
+#     have AcrPush on PROD_ACR_NAME and repo-write on k8s-manifests via PAT)
+#   PROD_ACR_NAME   — prod registry name without .azurecr.io (e.g. aegisprodacr)
+#   ACR_NAME        — dev/test registry name (images already built here; used
+#                     as build cache source to avoid rebuilding from scratch)
+#   GITOPS_PAT      — PAT with repo write on health-aegis/k8s-manifests
+#   SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO
+#   VITE_API_URL    — injected into the React client at build time
+# ---------------------------------------------------------------------------
+
+name: Release — Production
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+
+concurrency:
+  group: release-prod-${{ github.ref_name }}
+  cancel-in-progress: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1 — PREPARE
+# For a release every service is built (full release, not just changed files).
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  prepare:
+    name: "Release – Prepare"
+    runs-on: ubuntu-latest
+    outputs:
+      tag:    ${{ steps.out.outputs.tag }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set release tag
+        id: out
+        run: echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build full service matrix
+        id: matrix
+        run: |
+          cat >> "$GITHUB_OUTPUT" <<'MATRIX'
+          matrix={"include":[
+            {"service":"api-gateway","context":".","dockerfile":"services/api-gateway/Dockerfile","lang":"node","dir":"services/api-gateway"},
+            {"service":"health-records-service","context":"services/health-records-service","dockerfile":"services/health-records-service/Dockerfile","lang":"node","dir":"services/health-records-service"},
+            {"service":"medication-service","context":"services/medication-service","dockerfile":"services/medication-service/Dockerfile","lang":"node","dir":"services/medication-service"},
+            {"service":"ai-service","context":"services/ai-service","dockerfile":"services/ai-service/Dockerfile","lang":"node","dir":"services/ai-service"},
+            {"service":"notification-worker","context":"services/notification-worker","dockerfile":"services/notification-worker/Dockerfile","lang":"node","dir":"services/notification-worker"},
+            {"service":"imaging-service","context":"services/imaging-service","dockerfile":"services/imaging-service/Dockerfile","lang":"python","dir":"services/imaging-service"},
+            {"service":"diagnostic-agent-service","context":"services/diagnostic-agent-service","dockerfile":"services/diagnostic-agent-service/Dockerfile","lang":"python","dir":"services/diagnostic-agent-service"},
+            {"service":"coordinator-agent","context":"services/coordinator-agent","dockerfile":"services/coordinator-agent/Dockerfile","lang":"python","dir":"services/coordinator-agent"},
+            {"service":"image-analysis-agent","context":"services/image-analysis-agent","dockerfile":"services/image-analysis-agent/Dockerfile","lang":"python","dir":"services/image-analysis-agent"},
+            {"service":"patient-history-agent","context":"services/patient-history-agent","dockerfile":"services/patient-history-agent/Dockerfile","lang":"python","dir":"services/patient-history-agent"},
+            {"service":"client","context":".","dockerfile":"client/Dockerfile","lang":"node","dir":"client"}
+          ]}
+          MATRIX
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 2 — BUILD
+# Builds each service image and saves as artifact for Trivy + Push.
+# Uses dev ACR's build cache to avoid a cold rebuild.
+# ─────────────────────────────────────────────────────────────────────────────
+  build:
+    name: "Release – Build — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context:    ${{ matrix.context }}
+          file:       ${{ matrix.dockerfile }}
+          push:       false
+          load:       true
+          tags:       ${{ secrets.PROD_ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to:   type=gha,scope=${{ matrix.service }},mode=max
+          build-args: |
+            ${{ matrix.service == 'client' && format('VITE_API_URL={0}', secrets.VITE_API_URL) || '' }}
+
+      - name: Save image artifact
+        run: |
+          IMAGE="${{ secrets.PROD_ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}"
+          docker save "$IMAGE" | gzip > /tmp/${{ matrix.service }}.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name:           image-${{ matrix.service }}-${{ needs.prepare.outputs.tag }}
+          path:           /tmp/${{ matrix.service }}.tar.gz
+          retention-days: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 3 — TRIVY  (fails on HIGH / CRITICAL)
+# ─────────────────────────────────────────────────────────────────────────────
+  trivy:
+    name: "Release – Trivy — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    permissions:
+      contents:        read
+      security-events: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-${{ matrix.service }}-${{ needs.prepare.outputs.tag }}
+          path: /tmp
+
+      - name: Load image
+        run: docker load < /tmp/${{ matrix.service }}.tar.gz
+
+      - name: Trivy vulnerability scan (enforce gate)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref:      ${{ secrets.PROD_ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}
+          format:         table
+          severity:       HIGH,CRITICAL
+          exit-code:      '1'
+          ignore-unfixed: true
+          scanners:       vuln
+
+      - name: Trivy SARIF upload
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          image-ref:      ${{ secrets.PROD_ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}
+          format:         sarif
+          output:         trivy-${{ matrix.service }}.sarif
+          severity:       HIGH,CRITICAL
+          exit-code:      '0'
+          ignore-unfixed: true
+          scanners:       vuln
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category:   trivy-prod-${{ matrix.service }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 4 — AWAIT APPROVAL  (required reviewer gate before prod push)
+# Configure: Settings → Environments → production → Required reviewers
+# ─────────────────────────────────────────────────────────────────────────────
+  await-approval:
+    name: "Release – Await production approval"
+    runs-on: ubuntu-latest
+    needs: trivy
+    if: needs.trivy.result == 'success'
+    environment: production
+    steps:
+      - name: Approval granted
+        run: echo "✅ Production release approved — proceeding to push."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 5 — PUSH TO PROD ACR
+# Loads each artifact image and pushes to aegisprodacr.azurecr.io with the
+# semver tag.
+# ─────────────────────────────────────────────────────────────────────────────
+  push-prod:
+    name: "Release – Push — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: [prepare, await-approval]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-${{ matrix.service }}-${{ needs.prepare.outputs.tag }}
+          path: /tmp
+
+      - name: Load image
+        run: docker load < /tmp/${{ matrix.service }}.tar.gz
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to prod ACR
+        run: az acr login --name ${{ secrets.PROD_ACR_NAME }}
+
+      - name: Push to prod ACR
+        run: |
+          docker push "${{ secrets.PROD_ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}"
+          echo "  ✓ pushed ${{ matrix.service }}:${{ needs.prepare.outputs.tag }} to ${{ secrets.PROD_ACR_NAME }}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 6 — UPDATE MANIFEST
+# Writes the semver tag into k8s-manifests/environments/prod/values.yaml for
+# every service so ArgoCD triggers the prod rollout.
+# ─────────────────────────────────────────────────────────────────────────────
+  update-manifest:
+    name: "Release – Update prod manifest"
+    runs-on: ubuntu-latest
+    needs: [prepare, push-prod]
+    if: needs.push-prod.result == 'success'
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout k8s-manifests
+        uses: actions/checkout@v4
+        with:
+          repository: health-aegis/k8s-manifests
+          token:      ${{ secrets.GITOPS_PAT }}
+          path:       k8s-manifests
+
+      - name: Patch prod image tags to ${{ needs.prepare.outputs.tag }}
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          VALUES="k8s-manifests/environments/prod/values.yaml"
+
+          # Bootstrap prod directory if it doesn't exist yet in k8s-manifests
+          if [ ! -f "$VALUES" ]; then
+            SRC="helm/environments/prod"
+            echo "⚕ Bootstrapping k8s-manifests/environments/prod/"
+            mkdir -p "k8s-manifests/environments/prod/templates"
+            cp "${SRC}/Chart.yaml" "k8s-manifests/environments/prod/Chart.yaml"
+            rsync -a "${SRC}/templates/" "k8s-manifests/environments/prod/templates/"
+            cp "${SRC}/values.yaml" "${VALUES}"
+          fi
+
+          SERVICES=(
+            api-gateway health-records-service medication-service ai-service
+            notification-worker imaging-service diagnostic-agent-service
+            coordinator-agent image-analysis-agent patient-history-agent client
+          )
+          for SVC in "${SERVICES[@]}"; do
+            yq -i ".\"${SVC}\".image.tag = \"${TAG}\"" "${VALUES}"
+            echo "  ✓ ${SVC}.image.tag → ${TAG}"
+          done
+
+      - name: Commit release tag bump to k8s-manifests
+        working-directory: k8s-manifests
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add environments/prod/
+          git diff --cached --quiet \
+            && echo "No prod tag changes to commit." \
+            && exit 0
+
+          git commit -m "chore(release): bump prod image tags to ${TAG} [skip ci]"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 7 — NOTIFY  (always)
+# ─────────────────────────────────────────────────────────────────────────────
+  notify:
+    name: "Release – Notify"
+    runs-on: ubuntu-latest
+    needs: [prepare, build, trivy, await-approval, push-prod, update-manifest]
+    if: always()
+    steps:
+      - name: Resolve status
+        id: status
+        run: |
+          RESULTS="${{ join(needs.*.result, ',') }}"
+          if echo "$RESULTS" | grep -qE 'failure|cancelled'; then
+            echo "value=failure" >> "$GITHUB_OUTPUT"; echo "emoji=❌" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=success" >> "$GITHUB_OUTPUT"; echo "emoji=✅" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send email notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port:    ${{ secrets.SMTP_PORT }}
+          secure:         true
+          username:       ${{ secrets.SMTP_USERNAME }}
+          password:       ${{ secrets.SMTP_PASSWORD }}
+          to:             ${{ secrets.EMAIL_TO }}
+          from:           Aegis Release <${{ secrets.SMTP_USERNAME }}>
+          subject:        "${{ steps.status.outputs.emoji }} [Aegis Release] ${{ steps.status.outputs.value }} — prod ${{ needs.prepare.outputs.tag }}"
+          body: |
+            Aegis Health — Production Release Pipeline
+
+            Status      : ${{ steps.status.outputs.value }}
+            Release tag : ${{ needs.prepare.outputs.tag }}
+            Namespace   : aegis-prod
+            Actor       : ${{ github.actor }}
+            Run         : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

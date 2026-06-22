@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { MedicationModel, CaregiverModel, SystemStatusModel } from '../models/models';
+import { publishAlert } from '../services/serviceBus';
 
 export const getMedications = async (req: Request, res: Response) => {
   try {
@@ -103,6 +104,18 @@ export const missMedication = async (req: Request, res: Response) => {
           timestamp: new Date().toISOString(),
         });
       }
+
+      // Publish to Service Bus so the notification-worker sends the caregiver email
+      await publishAlert({
+        caregiverName: caregiver.name,
+        caregiverEmail: caregiver.email,
+        patientUserId: String(req.userId),
+        medicationName: med.name,
+        dosage: med.dosage,
+        missedCount: med.missedCount,
+        alertThreshold: caregiver.alertThreshold,
+        alertReason: status.alertReason || '',
+      });
     }
 
     res.json(med);
