@@ -265,7 +265,7 @@ module "communication" {
 # ---------------------------------------------------------------------------
 module "service_bus" {
   source              = "./modules/service-bus"
-  namespace_name      = "${local.prefix}-sb"
+  namespace_name      = "${local.prefix}-bus"
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   tags                = local.common_tags
