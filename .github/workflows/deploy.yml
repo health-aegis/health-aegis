@@ -117,15 +117,14 @@ jobs:
 
           if [[ "${BRANCH}" == "main" || "${{ inputs.environment }}" == "prod" ]]; then
             ENV="prod"
-            # Semver tag must already exist on this commit (created by developer before push)
+            # Build workflow auto-creates the semver tag; read it here
             git fetch --tags --quiet
             TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
-            if [ -z "$TAG" ] && [ -n "${{ inputs.image_tag }}" ]; then
+            if [ -z "$TAG" ]; then
               TAG="${{ inputs.image_tag }}"
             fi
             if [ -z "$TAG" ]; then
-              echo "⚠ No semver tag found — run: git tag vX.Y.Z && git push origin vX.Y.Z before pushing to main"
-              exit 1
+              echo "⚠ No semver tag found on this commit"; exit 1
             fi
           else
             ENV="dev"

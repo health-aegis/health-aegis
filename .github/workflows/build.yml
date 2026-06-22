@@ -59,6 +59,10 @@ jobs:
   prepare:
     name: "Prepare"
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # needed to push the auto-generated semver tag on main
+
     outputs:
       tag:         ${{ steps.out.outputs.tag }}
       push:        ${{ steps.out.outputs.push }}
@@ -111,20 +115,42 @@ jobs:
       - name: Set tag and push flag
         id: out
         run: |
-          # main  → semver tag (git describe picks the most recent vX.Y.Z tag)
-          # other → sha-<7>  (immutable, per-commit)
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            # ── Auto-generate next semver tag ─────────────────────────────────
+            # Find the latest vX.Y.Z tag reachable from HEAD
             git fetch --tags --quiet
-            TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
-            if [ -z "$TAG" ]; then
-              echo "⚠ No semver tag found on main — tag the commit before pushing (git tag vX.Y.Z)"
-              exit 1
+            LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            echo "Latest tag: ${LATEST}"
+
+            # Parse current version
+            MAJOR=$(echo "${LATEST}" | sed 's/v//' | cut -d. -f1)
+            MINOR=$(echo "${LATEST}" | sed 's/v//' | cut -d. -f2)
+            PATCH=$(echo "${LATEST}" | sed 's/v//' | cut -d. -f3)
+
+            # Scan commit messages since last tag to determine bump type
+            # BREAKING CHANGE or feat!: → major
+            # feat:                     → minor
+            # fix: / chore: / etc.      → patch
+            COMMITS=$(git log "${LATEST}..HEAD" --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
+            if echo "${COMMITS}" | grep -qE "(BREAKING CHANGE|^.+!:)"; then
+              NEXT="v$((MAJOR + 1)).0.0"
+            elif echo "${COMMITS}" | grep -qE "^feat(\(.+\))?:"; then
+              NEXT="v${MAJOR}.$((MINOR + 1)).0"
+            else
+              NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
             fi
+
+            echo "Auto-versioning: ${LATEST} → ${NEXT}"
+            git tag "${NEXT}"
+            git push origin "${NEXT}"
+            TAG="${NEXT}"
           else
+            # develop → immutable SHA tag
             TAG="sha-${GITHUB_SHA:0:7}"
           fi
-          echo "tag=${TAG}"                                                          >> "$GITHUB_OUTPUT"
-          echo "push=${{ github.event_name == 'push' && 'true' || 'false' }}"      >> "$GITHUB_OUTPUT"
+
+          echo "tag=${TAG}"                                                        >> "$GITHUB_OUTPUT"
+          echo "push=${{ github.event_name == 'push' && 'true' || 'false' }}"    >> "$GITHUB_OUTPUT"
 
       - name: Build service matrix
         id: matrix
