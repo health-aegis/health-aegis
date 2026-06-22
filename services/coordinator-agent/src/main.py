@@ -17,9 +17,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-from azure.ai.inference import ChatCompletionsClient
-from azure.ai.inference.models import SystemMessage, UserMessage
-from azure.core.credentials import AzureKeyCredential
+import google.generativeai as genai
 
 app = FastAPI(title="Coordinator Agent — Aegis Health")
 
@@ -31,31 +29,28 @@ app.add_middleware(
 )
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-AZURE_AI_ENDPOINT = os.getenv("AZURE_AI_ENDPOINT", "")
-AZURE_AI_KEY      = os.getenv("AZURE_AI_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 IMAGE_AGENT_URL   = os.getenv("IMAGE_ANALYSIS_AGENT_URL",  "http://image-analysis-agent:8001")
 HISTORY_AGENT_URL = os.getenv("PATIENT_HISTORY_AGENT_URL", "http://patient-history-agent:8002")
 
 REQUEST_TIMEOUT = 25.0
 
-AI_MODELS = ["gpt-4o-mini", "gpt-4o"]
+GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"]
 
 ai_client = None
 ai_ready   = False
 
-if AZURE_AI_ENDPOINT and AZURE_AI_KEY:
+if GEMINI_API_KEY:
     try:
-        ai_client = ChatCompletionsClient(
-            endpoint=AZURE_AI_ENDPOINT,
-            credential=AzureKeyCredential(AZURE_AI_KEY),
-        )
+        genai.configure(api_key=GEMINI_API_KEY)
+        ai_client = genai.GenerativeModel("gemini-1.5-flash")
         ai_ready = True
-        print(f"✅ [coordinator-agent] Azure AI configured → {AZURE_AI_ENDPOINT}")
+        print("✅ [coordinator-agent] Gemini AI configured")
     except Exception as e:
-        print(f"⚠️  [coordinator-agent] Azure AI setup failed: {e}")
+        print(f"⚠️  [coordinator-agent] Gemini setup failed: {e}")
 else:
-    print("ℹ️  [coordinator-agent] AZURE_AI_KEY/ENDPOINT not set — fallback will be used")
+    print("ℹ️  [coordinator-agent] GEMINI_API_KEY not set — fallback response will be used")
 
 
 # ─── Request/Response Models ──────────────────────────────────────────────────
@@ -225,17 +220,13 @@ def call_ai(prompt: str) -> tuple[str, str]:
         )
 
     last_error = None
-    for model_name in AI_MODELS:
+    for model_name in GEMINI_MODELS:
         try:
-            response = ai_client.complete(
-                model=model_name,
-                messages=[UserMessage(content=prompt)],
-                max_tokens=600,
-                temperature=0.4,
-            )
-            text = response.choices[0].message.content
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            text = response.text
             if text and text.strip():
-                print(f"✅ [coordinator-agent] Azure AI response via {model_name}")
+                print(f"✅ [coordinator-agent] Gemini response via {model_name}")
                 return text, model_name
         except Exception as e:
             last_error = e
@@ -298,8 +289,7 @@ def health_check():
     return {
         "status": "ok",
         "service": "coordinator-agent",
-        "ai_provider": "Azure AI Foundry" if ai_ready else "not configured",
-        "endpoint": AZURE_AI_ENDPOINT,
+        "ai_provider": "Gemini" if ai_ready else "not configured",
         "image_agent_url": IMAGE_AGENT_URL,
         "history_agent_url": HISTORY_AGENT_URL,
     }
