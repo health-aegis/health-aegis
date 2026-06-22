@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Application Gateway module — WAF-less Standard_v2 acting as single ingress
+# Application Gateway module — Standard_v2 (dev/test) or WAF_v2 (prod)
 #
 # AGIC (Application Gateway Ingress Controller) is enabled as an AKS addon and
 # programs this gateway dynamically based on Kubernetes Ingress resources. All
@@ -10,8 +10,11 @@
 # would revert the AGIC-managed config back to the stub values below,
 # breaking all in-cluster routing.
 #
+# WAF (enable_waf = true): switches to WAF_v2 SKU with OWASP 3.2 in Prevention
+# mode — required for production. SKU tier cannot be changed after creation.
+#
 # Traffic flow:
-#   Internet → Public IP → App Gateway (Standard_v2) → AKS pods
+#   Internet → Public IP → App Gateway → AKS pods
 #   (AGIC programs the routing rules from Kubernetes Ingress annotations)
 # ---------------------------------------------------------------------------
 
@@ -30,14 +33,26 @@ resource "azurerm_application_gateway" "this" {
   location            = var.location
 
   sku {
-    name     = "Standard_v2"
-    tier     = "Standard_v2"
+    name     = var.enable_waf ? "WAF_v2" : "Standard_v2"
+    tier     = var.enable_waf ? "WAF_v2" : "Standard_v2"
     capacity = 2
   }
 
   ssl_policy {
     policy_type = "Predefined"
     policy_name = "AppGwSslPolicy20220101"
+  }
+
+  # WAF configuration — only active when enable_waf = true (WAF_v2 SKU).
+  # OWASP 3.2 in Prevention mode blocks malicious requests rather than just logging.
+  dynamic "waf_configuration" {
+    for_each = var.enable_waf ? [1] : []
+    content {
+      enabled          = true
+      firewall_mode    = "Prevention"
+      rule_set_type    = "OWASP"
+      rule_set_version = "3.2"
+    }
   }
 
   gateway_ip_configuration {
@@ -97,6 +112,7 @@ resource "azurerm_application_gateway" "this" {
       redirect_configuration,
       ssl_certificate,
       url_path_map,
+      waf_configuration,
       tags,
     ]
   }

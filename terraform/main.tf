@@ -120,6 +120,7 @@ module "app_gateway" {
   resource_group_name = module.resource_group.name
   location            = module.resource_group.location
   subnet_id           = module.networking.subnet_ids["public-subnet"]
+  enable_waf          = var.enable_waf
   tags                = local.common_tags
 }
 
@@ -281,6 +282,8 @@ module "key_vault" {
   deployer_object_id             = local.deployer_object_id
   deployer_ip                    = var.deployer_ip
   workload_identity_principal_id = module.workload_identity.principal_id
+  purge_protection_enabled       = var.key_vault_purge_protection
+  soft_delete_retention_days     = var.key_vault_retention_days
   tags                           = local.common_tags
 
   # All secret values from other modules:
