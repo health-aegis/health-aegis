@@ -11,7 +11,7 @@ COPY src/ ./src/
 
 RUN npm run build
 
-# ── Production stage ─────────────────────────────────────────────────────────
+# ── Production stage ──────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
 
 WORKDIR /app
