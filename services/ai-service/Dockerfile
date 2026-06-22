@@ -1,7 +1,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev && npm install undici@^6.27.0
 
 FROM node:20-alpine AS runner
 WORKDIR /app
