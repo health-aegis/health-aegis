@@ -5,7 +5,7 @@ FROM node:20-alpine AS builder
 #   /workspace/shared/types.ts
 #   /workspace/services/api-gateway/src/models/models.ts
 # This makes the import '../../../../shared/types' resolve correctly:
-#   from src/models/ → ../../../../ → /workspace/ → shared/types ✅
+#   from src/models/ → ../../../../ → /workspace/ → shared/types
 WORKDIR /workspace
 
 # Copy shared types (needed by TypeScript at compile time)
