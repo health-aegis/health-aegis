@@ -9,6 +9,7 @@
     "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts"
   },
   "dependencies": {
+    "@azure/service-bus": "^7.9.5",
     "@azure/storage-blob": "^12.32.0",
     "@google/generative-ai": "^0.11.0",
     "@types/bcryptjs": "^2.4.6",
