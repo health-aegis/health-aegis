@@ -13,11 +13,11 @@ service:
 
 resources:
   requests:
-    cpu: 20m
-    memory: 64Mi
-  limits:
     cpu: 100m
     memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi
 
 hpa:
   enabled: false

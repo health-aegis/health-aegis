@@ -12,10 +12,10 @@ hpa:
 
 resources:
   requests:
-    cpu: 50m
-    memory: 128Mi
+    cpu: 200m
+    memory: 256Mi
   limits:
-    cpu: 300m
+    cpu: 500m
     memory: 512Mi
 
 env:

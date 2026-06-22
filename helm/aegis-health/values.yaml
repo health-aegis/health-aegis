@@ -2,23 +2,24 @@
 # Helmified version of the k8s/ manifests, targeting AKS with:
 #   - Azure Key Vault CSI secrets provider (Workload Identity)
 #   - Azure Container Registry images
-#   - KGateway (Gateway API) ingress
+#   - AGIC (Application Gateway Ingress Controller) for external access
 #   - In-cluster PostgreSQL; MongoDB provided externally by Cosmos DB (via KV secret)
+#
+# Two namespaces:
+#   aegis-dev  → develop branch, aegistestacr, minimal replicas, no HPA
+#   aegis-prod → main branch,    aegisprodacr, 2+ replicas,     HPA enabled
 #
 # Values marked "set at deploy time" come from Terraform outputs — pass with
 #   helm upgrade --install ... --set <key>=<value>
-# (see helm/README.md).
 
 global:
-  # ACR login server, e.g. aegisacraswin.azurecr.io (acr_name in terraform.tfvars)
   acrLoginServer: aegisacraswin.azurecr.io
   imageTag: latest
   imagePullPolicy: Always
 
 namespace:
-  # The chart deploys into the release namespace (helm -n aegis ...).
-  # Set createNamespace via `helm install --create-namespace`.
-  name: aegis
+  # Overridden per environment: aegis-dev (values-dev.yaml) / aegis-prod (values-prod.yaml)
+  name: aegis-dev
 
 # ─── Azure Workload Identity ─────────────────────────────────────────────────
 workloadIdentity:
@@ -30,12 +31,9 @@ keyVault:
   name: aegis-kv-2026
   tenantId: "3076b773-f5d9-413e-9564-7deaa3d0d7b7"
 
-# Name of the SecretProviderClass and the K8s Secret it syncs into.
 secretProviderClassName: aegis-kv-secret-provider
 secretName: aegis-kv-secrets
 
-# KV object name -> K8s Secret key. Drives both the CSI `objects` array and the
-# synced `secretObjects`. Must match the secret names created in Terraform main.tf.
 secrets:
   - kvName: kv-mongodb-uri
     key: MONGODB_URI
@@ -78,21 +76,20 @@ postgres:
   serviceName: postgres-service
   db: imaging
   user: aegis
-  # Password is read from the KV-synced secret key POSTGRES_PASSWORD.
   storageClass: managed-csi
   storageSize: 5Gi
   resources:
     requests: { cpu: "100m", memory: "256Mi" }
     limits: { cpu: "500m", memory: "512Mi" }
 
-# ─── Backend microservices ───────────────────────────────────────────────────
-# All share: Workload Identity SA, CSI secrets volume, envFrom (secret+config).
-# `runtime` is informational (node => /healthz, python => /health).
+# ─── Shared resource defaults for backend microservices ──────────────────────
 backendDefaults:
   resources:
     requests: { cpu: "100m", memory: "192Mi" }
     limits: { cpu: "500m", memory: "512Mi" }
 
+# ─── Backend microservices ───────────────────────────────────────────────────
+# runtime: node services expose /healthz; python/fastapi services expose /health
 services:
   - name: api-gateway
     serviceName: api-gateway-service
@@ -101,66 +98,129 @@ services:
     replicas: 1
     healthPath: /healthz
     resources:
-      requests: { cpu: "50m", memory: "128Mi" }
-      limits: { cpu: "300m", memory: "512Mi" }
+      requests: { cpu: "100m", memory: "192Mi" }
+      limits: { cpu: "500m", memory: "512Mi" }
+    hpa:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      cpuUtilization: 70
+      memoryUtilization: 80
 
   - name: health-records-service
     image: health-records-service
     port: 5001
     replicas: 1
     healthPath: /healthz
+    hpa:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      cpuUtilization: 70
+      memoryUtilization: 80
 
   - name: medication-service
     image: medication-service
     port: 5002
     replicas: 1
     healthPath: /healthz
+    hpa:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 4
+      cpuUtilization: 70
+      memoryUtilization: 80
 
   - name: ai-service
     image: ai-service
     port: 5003
     replicas: 1
     healthPath: /healthz
+    hpa:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      cpuUtilization: 70
+      memoryUtilization: 80
 
   - name: imaging-service
     image: imaging-service
     port: 5004
     replicas: 1
     healthPath: /health
+    hpa:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      cpuUtilization: 70
+      memoryUtilization: 80
 
   - name: diagnostic-agent-service
     image: diagnostic-agent-service
     port: 5005
     replicas: 1
     healthPath: /health
+    hpa:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      cpuUtilization: 70
+      memoryUtilization: 80
 
   - name: coordinator-agent
     image: coordinator-agent
     port: 8000
     replicas: 1
     healthPath: /health
-    identityPath: /identity   # workload identity verification endpoint
+    identityPath: /identity
+    hpa:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      cpuUtilization: 70
+      memoryUtilization: 80
 
   - name: image-analysis-agent
     image: image-analysis-agent
     port: 8001
     replicas: 1
     healthPath: /health
+    hpa:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      cpuUtilization: 70
+      memoryUtilization: 80
 
   - name: patient-history-agent
     image: patient-history-agent
     port: 8002
     replicas: 1
     healthPath: /health
+    hpa:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      cpuUtilization: 70
+      memoryUtilization: 80
 
-  # Background worker — no port, no Service, no probes.
+  # Background worker — no HTTP port; uses exec probe to verify the Node process is alive.
   - name: notification-worker
     image: notification-worker
     replicas: 1
     worker: true
     resources:
-      requests: { cpu: "50m", memory: "128Mi" }
-      limits: { cpu: "250m", memory: "256Mi" }
+      requests: { cpu: "100m", memory: "128Mi" }
+      limits: { cpu: "300m", memory: "256Mi" }
+    execProbe:
+      command: ["pgrep", "-f", "node"]
+      readinessInitialDelay: 15
+      livenessInitialDelay: 30
+    hpa:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 3
+      cpuUtilization: 70
 
 # ─── React frontend (nginx static) ───────────────────────────────────────────
 frontend:
@@ -172,8 +232,13 @@ frontend:
   replicas: 1
   healthPath: /healthz
   resources:
-    requests: { cpu: "20m", memory: "64Mi" }
-    limits: { cpu: "100m", memory: "128Mi" }
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits: { cpu: "300m", memory: "256Mi" }
+  hpa:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    cpuUtilization: 60
 
 # ─── AGIC Ingress (Application Gateway Ingress Controller) ───────────────────
 ingress:
@@ -188,7 +253,6 @@ gateway:
   className: kgateway
   name: aegis-gateway
   listenerPort: 80
-  # Backend for the /api prefix route (the api-gateway Service).
   apiBackend:
     name: api-gateway-service
     port: 5000

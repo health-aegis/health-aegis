@@ -1,9 +1,10 @@
 # ──────────────────────────────────────────────────────────────────────
-# PROD environment values — all sub-chart overrides in one file.
-# Keys match sub-chart names. CD pipeline patches <subchart>.image.tag.
+# PROD environment values — aegis-prod namespace.
+# Key services run ≥ 2 replicas with HPA enabled.
+# Resources meet spec: CPU req ≥100m, limit ≤500m; mem req ≥128Mi, limit ≤512Mi.
 # ──────────────────────────────────────────────────────────────────────
 
-# ── Shared infrastructure (env-level templates) ────────────────────────
+# ── Shared infrastructure ──────────────────────────────────────────────
 workloadIdentity:
   clientId: ""  # set after prod terraform apply
 
@@ -53,6 +54,13 @@ api-gateway:
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   hpa:
     enabled: true
     minReplicas: 2
@@ -67,6 +75,13 @@ health-records-service:
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   hpa:
     enabled: true
     minReplicas: 2
@@ -81,94 +96,143 @@ medication-service:
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   hpa:
     enabled: true
     minReplicas: 2
-    maxReplicas: 5
+    maxReplicas: 4
     cpuUtilization: 70
     memoryUtilization: 80
   env:
     NODE_ENV: production
 
 ai-service:
-  replicaCount: 2
+  replicaCount: 1
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 150m
+      memory: 192Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   hpa:
     enabled: true
-    minReplicas: 2
-    maxReplicas: 5
-    cpuUtilization: 70
+    minReplicas: 1
+    maxReplicas: 3
+    cpuUtilization: 75
     memoryUtilization: 80
   env:
     NODE_ENV: production
 
 imaging-service:
-  replicaCount: 2
+  replicaCount: 1
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 150m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   hpa:
     enabled: true
-    minReplicas: 2
-    maxReplicas: 5
+    minReplicas: 1
+    maxReplicas: 3
     cpuUtilization: 70
     memoryUtilization: 80
   env:
     NODE_ENV: production
 
 diagnostic-agent-service:
-  replicaCount: 2
+  replicaCount: 1
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   hpa:
     enabled: true
-    minReplicas: 2
-    maxReplicas: 5
+    minReplicas: 1
+    maxReplicas: 3
     cpuUtilization: 70
     memoryUtilization: 80
   env:
     NODE_ENV: production
 
 coordinator-agent:
-  replicaCount: 2
+  replicaCount: 1
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   hpa:
     enabled: true
-    minReplicas: 2
-    maxReplicas: 5
+    minReplicas: 1
+    maxReplicas: 3
     cpuUtilization: 70
     memoryUtilization: 80
   env:
     NODE_ENV: production
 
 image-analysis-agent:
-  replicaCount: 2
+  replicaCount: 1
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   hpa:
     enabled: true
-    minReplicas: 2
-    maxReplicas: 5
+    minReplicas: 1
+    maxReplicas: 3
     cpuUtilization: 70
     memoryUtilization: 80
   env:
     NODE_ENV: production
 
 patient-history-agent:
-  replicaCount: 2
+  replicaCount: 1
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   hpa:
     enabled: true
-    minReplicas: 2
-    maxReplicas: 5
+    minReplicas: 1
+    maxReplicas: 3
     cpuUtilization: 70
     memoryUtilization: 80
   env:
@@ -179,22 +243,32 @@ notification-worker:
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
   hpa:
-    enabled: true
-    minReplicas: 1
-    maxReplicas: 3
-    cpuUtilization: 70
-    memoryUtilization: 80
+    enabled: false
 
 client:
   replicaCount: 2
   image:
     acrLoginServer: aegisprodacr.azurecr.io
     tag: "latest"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
   hpa:
     enabled: true
     minReplicas: 2
-    maxReplicas: 5
+    maxReplicas: 6
     cpuUtilization: 60
 
 postgres:

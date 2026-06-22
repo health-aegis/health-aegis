@@ -2,6 +2,7 @@ global:
   acrLoginServer: aegisprodacr.azurecr.io
   imageTag: latest
 
+# Per-service image tags — patched by deploy.yml on every CI build.
 imageTags:
   api-gateway: "latest"
   health-records-service: "latest"
@@ -24,3 +25,159 @@ workloadIdentity:
 keyVault:
   name: aegis-kv-prod
   tenantId: "3076b773-f5d9-413e-9564-7deaa3d0d7b7"
+
+config:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+
+postgres:
+  storageSize: 20Gi
+  resources:
+    requests: { cpu: "250m", memory: "256Mi" }
+    limits: { cpu: "500m", memory: "512Mi" }
+
+# ─── Prod service overrides: replicas ≥ 2 for key services, HPA enabled ──────
+services:
+  - name: api-gateway
+    serviceName: api-gateway-service
+    image: api-gateway
+    port: 5000
+    replicas: 2
+    healthPath: /healthz
+    resources:
+      requests: { cpu: "200m", memory: "256Mi" }
+      limits: { cpu: "500m", memory: "512Mi" }
+    hpa:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 5
+      cpuUtilization: 70
+      memoryUtilization: 80
+
+  - name: health-records-service
+    image: health-records-service
+    port: 5001
+    replicas: 2
+    healthPath: /healthz
+    hpa:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 5
+      cpuUtilization: 70
+      memoryUtilization: 80
+
+  - name: medication-service
+    image: medication-service
+    port: 5002
+    replicas: 2
+    healthPath: /healthz
+    hpa:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 4
+      cpuUtilization: 70
+      memoryUtilization: 80
+
+  - name: ai-service
+    image: ai-service
+    port: 5003
+    replicas: 1
+    healthPath: /healthz
+    hpa:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 3
+      cpuUtilization: 75
+      memoryUtilization: 80
+
+  - name: imaging-service
+    image: imaging-service
+    port: 5004
+    replicas: 1
+    healthPath: /health
+    hpa:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 3
+      cpuUtilization: 70
+      memoryUtilization: 80
+
+  - name: diagnostic-agent-service
+    image: diagnostic-agent-service
+    port: 5005
+    replicas: 1
+    healthPath: /health
+    hpa:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 3
+      cpuUtilization: 70
+      memoryUtilization: 80
+
+  - name: coordinator-agent
+    image: coordinator-agent
+    port: 8000
+    replicas: 1
+    healthPath: /health
+    identityPath: /identity
+    hpa:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 3
+      cpuUtilization: 70
+      memoryUtilization: 80
+
+  - name: image-analysis-agent
+    image: image-analysis-agent
+    port: 8001
+    replicas: 1
+    healthPath: /health
+    hpa:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 3
+      cpuUtilization: 70
+      memoryUtilization: 80
+
+  - name: patient-history-agent
+    image: patient-history-agent
+    port: 8002
+    replicas: 1
+    healthPath: /health
+    hpa:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 3
+      cpuUtilization: 70
+      memoryUtilization: 80
+
+  - name: notification-worker
+    image: notification-worker
+    replicas: 1
+    worker: true
+    resources:
+      requests: { cpu: "100m", memory: "128Mi" }
+      limits: { cpu: "300m", memory: "256Mi" }
+    execProbe:
+      command: ["pgrep", "-f", "node"]
+      readinessInitialDelay: 15
+      livenessInitialDelay: 30
+    hpa:
+      enabled: false
+
+frontend:
+  enabled: true
+  name: client
+  serviceName: client-service
+  image: client
+  port: 80
+  replicas: 2
+  healthPath: /healthz
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits: { cpu: "300m", memory: "256Mi" }
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    cpuUtilization: 60

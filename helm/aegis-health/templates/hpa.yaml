@@ -1,0 +1,61 @@
+{{- $root := . -}}
+{{- range .Values.services }}
+{{- if and .hpa .hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .name }}-hpa
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    app: {{ .name }}
+    {{- include "aegis.labels" $root | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: {{ .name }}
+  minReplicas: {{ .hpa.minReplicas | default 2 }}
+  maxReplicas: {{ .hpa.maxReplicas | default 5 }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .hpa.cpuUtilization | default 70 }}
+    {{- if .hpa.memoryUtilization }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .hpa.memoryUtilization }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- if and .Values.frontend.hpa .Values.frontend.hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Values.frontend.name }}-hpa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.frontend.name }}
+    {{- include "aegis.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: {{ .Values.frontend.name }}
+  minReplicas: {{ .Values.frontend.hpa.minReplicas | default 2 }}
+  maxReplicas: {{ .Values.frontend.hpa.maxReplicas | default 6 }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.frontend.hpa.cpuUtilization | default 60 }}
+{{- end }}

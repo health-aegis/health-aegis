@@ -1,9 +1,10 @@
 # ──────────────────────────────────────────────────────────────────────
-# DEV environment values — all sub-chart overrides in one file.
-# Keys match sub-chart names. CD pipeline patches <subchart>.image.tag.
+# DEV environment values — aegis-dev namespace.
+# Minimal replicas (1) and no HPA to reduce AKS cost in testing.
+# Resources meet minimums (≥100m CPU, ≥128Mi memory) at lower limits.
 # ──────────────────────────────────────────────────────────────────────
 
-# ── Shared infrastructure (env-level templates) ────────────────────────
+# ── Shared infrastructure ──────────────────────────────────────────────
 workloadIdentity:
   clientId: "2ae07dc6-82dc-4b66-b0c1-c7bf9c974d88"
 
@@ -55,11 +56,11 @@ api-gateway:
     tag: "latest"
   resources:
     requests:
-      cpu: 30m
-      memory: 64Mi
+      cpu: 100m
+      memory: 192Mi
     limits:
-      cpu: 150m
-      memory: 256Mi
+      cpu: 300m
+      memory: 512Mi
   hpa:
     enabled: false
   env:
@@ -72,10 +73,10 @@ health-records-service:
     tag: "latest"
   resources:
     requests:
-      cpu: 50m
-      memory: 96Mi
+      cpu: 100m
+      memory: 128Mi
     limits:
-      cpu: 250m
+      cpu: 300m
       memory: 256Mi
   hpa:
     enabled: false
@@ -89,10 +90,10 @@ medication-service:
     tag: "latest"
   resources:
     requests:
-      cpu: 50m
-      memory: 96Mi
+      cpu: 100m
+      memory: 128Mi
     limits:
-      cpu: 250m
+      cpu: 300m
       memory: 256Mi
   hpa:
     enabled: false
@@ -106,11 +107,11 @@ ai-service:
     tag: "latest"
   resources:
     requests:
-      cpu: 50m
-      memory: 96Mi
+      cpu: 100m
+      memory: 192Mi
     limits:
-      cpu: 250m
-      memory: 256Mi
+      cpu: 300m
+      memory: 512Mi
   hpa:
     enabled: false
   env:
@@ -123,11 +124,11 @@ imaging-service:
     tag: "latest"
   resources:
     requests:
-      cpu: 50m
-      memory: 96Mi
+      cpu: 100m
+      memory: 192Mi
     limits:
-      cpu: 250m
-      memory: 256Mi
+      cpu: 300m
+      memory: 512Mi
   hpa:
     enabled: false
   env:
@@ -140,11 +141,11 @@ diagnostic-agent-service:
     tag: "latest"
   resources:
     requests:
-      cpu: 50m
-      memory: 96Mi
+      cpu: 100m
+      memory: 192Mi
     limits:
-      cpu: 250m
-      memory: 256Mi
+      cpu: 300m
+      memory: 512Mi
   hpa:
     enabled: false
   env:
@@ -157,11 +158,11 @@ coordinator-agent:
     tag: "latest"
   resources:
     requests:
-      cpu: 50m
-      memory: 96Mi
+      cpu: 100m
+      memory: 192Mi
     limits:
-      cpu: 250m
-      memory: 256Mi
+      cpu: 300m
+      memory: 512Mi
   hpa:
     enabled: false
   env:
@@ -174,11 +175,11 @@ image-analysis-agent:
     tag: "latest"
   resources:
     requests:
-      cpu: 50m
-      memory: 96Mi
+      cpu: 100m
+      memory: 192Mi
     limits:
-      cpu: 250m
-      memory: 256Mi
+      cpu: 300m
+      memory: 512Mi
   hpa:
     enabled: false
   env:
@@ -191,11 +192,11 @@ patient-history-agent:
     tag: "latest"
   resources:
     requests:
-      cpu: 50m
-      memory: 96Mi
+      cpu: 100m
+      memory: 192Mi
     limits:
-      cpu: 250m
-      memory: 256Mi
+      cpu: 300m
+      memory: 512Mi
   hpa:
     enabled: false
   env:
@@ -208,11 +209,11 @@ notification-worker:
     tag: "latest"
   resources:
     requests:
-      cpu: 30m
-      memory: 64Mi
-    limits:
-      cpu: 150m
+      cpu: 100m
       memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
   hpa:
     enabled: false
 
@@ -223,11 +224,11 @@ client:
     tag: "latest"
   resources:
     requests:
-      cpu: 10m
-      memory: 32Mi
+      cpu: 100m
+      memory: 128Mi
     limits:
-      cpu: 50m
-      memory: 64Mi
+      cpu: 300m
+      memory: 256Mi
   hpa:
     enabled: false
 
