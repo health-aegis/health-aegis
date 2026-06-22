@@ -48,7 +48,7 @@ config:
   NODE_ENV: "development"
   LOG_LEVEL: "debug"
   CORS_ORIGIN: "*"
-  ACS_SENDER_ADDRESS: ""
+  ACS_SENDER_ADDRESS: "DoNotReply@19817a5e-ba6b-4891-9b80-992a06446f56.azurecomm.net"
 
 ingress:
   enabled: true
