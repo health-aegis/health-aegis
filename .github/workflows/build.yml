@@ -68,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Resolve base SHA
         id: base
@@ -111,8 +111,20 @@ jobs:
       - name: Set tag and push flag
         id: out
         run: |
-          echo "tag=sha-${GITHUB_SHA:0:7}"                                        >> "$GITHUB_OUTPUT"
-          echo "push=${{ github.event_name == 'push' && 'true' || 'false' }}"    >> "$GITHUB_OUTPUT"
+          # main  → semver tag (git describe picks the most recent vX.Y.Z tag)
+          # other → sha-<7>  (immutable, per-commit)
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            git fetch --tags --quiet
+            TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+            if [ -z "$TAG" ]; then
+              echo "⚠ No semver tag found on main — tag the commit before pushing (git tag vX.Y.Z)"
+              exit 1
+            fi
+          else
+            TAG="sha-${GITHUB_SHA:0:7}"
+          fi
+          echo "tag=${TAG}"                                                          >> "$GITHUB_OUTPUT"
+          echo "push=${{ github.event_name == 'push' && 'true' || 'false' }}"      >> "$GITHUB_OUTPUT"
 
       - name: Build service matrix
         id: matrix
@@ -401,21 +413,26 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Login to ACR
-        run: az acr login --name ${{ secrets.ACR_NAME }}
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            az acr login --name ${{ secrets.PROD_ACR_NAME }}
+          else
+            az acr login --name ${{ secrets.ACR_NAME }}
+          fi
 
       - name: Push image
         run: |
-          ACR="${{ secrets.ACR_NAME }}.azurecr.io"
+          # main  → prod ACR (PROD_ACR_NAME) with semver tag
+          # other → dev ACR  (ACR_NAME)      with sha tag
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            ACR="${{ secrets.PROD_ACR_NAME }}.azurecr.io"
+          else
+            ACR="${{ secrets.ACR_NAME }}.azurecr.io"
+          fi
           SVC="${{ matrix.service }}"
           TAG="${{ needs.prepare.outputs.tag }}"
 
           docker push "${ACR}/${SVC}:${TAG}"
-
-          # Push :latest on main and develop (dev environment uses latest tag)
-          if [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/develop" ]; then
-            docker tag "${ACR}/${SVC}:${TAG}" "${ACR}/${SVC}:latest"
-            docker push "${ACR}/${SVC}:latest"
-          fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB 8 — RELEASE  (GitHub Release — main only, after all pushes succeed)
