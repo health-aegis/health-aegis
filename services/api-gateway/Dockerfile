@@ -11,7 +11,7 @@ WORKDIR /workspace
 # Copy shared types (needed by TypeScript at compile time)
 COPY shared/ ./shared/
 
-# Copy api-gateway package files and install ALL deps (incl. typescript/ts-node)
+# Copy api-gateway package files and install ALL deps 
 COPY services/api-gateway/package*.json ./services/api-gateway/
 COPY services/api-gateway/tsconfig.json ./services/api-gateway/
 
