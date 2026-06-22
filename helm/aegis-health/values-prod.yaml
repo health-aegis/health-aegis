@@ -26,6 +26,13 @@ keyVault:
   name: aegis-kv-prod
   tenantId: "3076b773-f5d9-413e-9564-7deaa3d0d7b7"
 
+ingress:
+  enabled: true
+  host: ageis-prod.b4n3xus.in
+  apiBackend:
+    name: api-gateway-service
+    port: 5000
+
 config:
   NODE_ENV: "production"
   LOG_LEVEL: "info"

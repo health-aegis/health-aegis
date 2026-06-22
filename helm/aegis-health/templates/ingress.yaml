@@ -11,7 +11,8 @@ metadata:
 spec:
   ingressClassName: azure-application-gateway
   rules:
-    - http:
+    - host: {{ .Values.ingress.host }}
+      http:
         paths:
           - path: /api/history
             pathType: Prefix
