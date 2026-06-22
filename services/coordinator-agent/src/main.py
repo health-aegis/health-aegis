@@ -17,9 +17,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-from azure.ai.inference import ChatCompletionsClient
-from azure.ai.inference.models import UserMessage
-from azure.core.credentials import AzureKeyCredential
+from openai import OpenAI
 
 app = FastAPI(title="Coordinator Agent — Aegis Health")
 
@@ -50,12 +48,11 @@ ai_ready   = False
 
 if AZURE_AI_KEY and AZURE_AI_ENDPOINT:
     try:
-        # ChatCompletionsClient works with Azure AI Foundry serverless endpoints
-        # without requiring api_version — avoids "API version not supported" errors.
-        ai_client = ChatCompletionsClient(
-            endpoint=AZURE_AI_ENDPOINT,
-            credential=AzureKeyCredential(AZURE_AI_KEY),
-            api_version="2025-01-01-preview",
+        # Use openai.OpenAI with base_url — matches Azure AI Foundry project endpoint
+        # pattern (no api_version needed, works with /api/projects/... endpoints).
+        ai_client = OpenAI(
+            base_url=AZURE_AI_ENDPOINT,
+            api_key=AZURE_AI_KEY,
         )
         ai_ready = True
         print(f"✅ [coordinator-agent] Azure AI Foundry configured → {AZURE_AI_ENDPOINT}")
@@ -234,9 +231,9 @@ def call_ai(prompt: str) -> tuple[str, str]:
     last_error = None
     for model_name in AI_MODELS:
         try:
-            response = ai_client.complete(
+            response = ai_client.chat.completions.create(
                 model=model_name,
-                messages=[UserMessage(content=prompt)],
+                messages=[{"role": "user", "content": prompt}],
                 max_tokens=600,
                 temperature=0.4,
             )
