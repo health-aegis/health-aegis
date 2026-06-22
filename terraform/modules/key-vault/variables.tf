@@ -59,6 +59,18 @@ variable "secrets" {
   default     = {}
 }
 
+variable "purge_protection_enabled" {
+  description = "Enable purge protection. Once true it cannot be set back to false. Use true for production."
+  type        = bool
+  default     = false
+}
+
+variable "soft_delete_retention_days" {
+  description = "Number of days to retain soft-deleted secrets (7-90). Use 90 for production."
+  type        = number
+  default     = 7
+}
+
 variable "tags" {
   description = "Tags to apply to Key Vault resources"
   type        = map(string)

@@ -18,6 +18,12 @@ variable "subnet_id" {
   type        = string
 }
 
+variable "enable_waf" {
+  description = "When true, deploys WAF_v2 SKU with OWASP 3.2 rules in Prevention mode instead of Standard_v2"
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
