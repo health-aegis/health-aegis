@@ -30,6 +30,8 @@ keyVault:
       key: AZURE_AI_KEY
     - kvName: kv-appinsights-conn
       key: APPLICATIONINSIGHTS_CONNECTION_STRING
+    - kvName: kv-servicebus-conn
+      key: AZURE_SERVICE_BUS_CONNECTION_STRING
 
 config:
   PORT: "5000"
