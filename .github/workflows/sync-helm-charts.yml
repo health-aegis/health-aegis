@@ -1,12 +1,14 @@
 # ---------------------------------------------------------------------------
 # Aegis Health — Helm Chart Sync
 #
-# Syncs chart templates, Chart.yaml, and values.yaml from this repo's
-# helm/charts/<service>/ into health-aegis/k8s-manifests/charts/<service>/
-# whenever those files change on main or develop.
+# Syncs chart templates, Chart.yaml, values.yaml, values-dev.yaml, and
+# values-prod.yaml from this repo's helm/charts/<service>/ into
+# health-aegis/k8s-manifests/charts/<service>/ whenever those files change.
 #
-# values-dev.yaml and values-prod.yaml in k8s-manifests are managed by
-# deploy.yml (image tag bumps) and are NOT overwritten here.
+# Static config (replicaCount, resources, HPA, acrLoginServer) comes from
+# this repo's values-<env>.yaml files.  The existing .image.tag in the
+# k8s-manifests copy is PRESERVED so a sync never reverts a live deployment.
+# Image tag bumps are still written by deploy.yml.
 #
 # Required secrets:
 #   GITOPS_PAT — PAT with repo write scope on health-aegis/k8s-manifests
@@ -71,9 +73,24 @@ jobs:
             rsync -a --delete "${SRC}/templates/" "${DST}/templates/"
 
             # Sync Chart.yaml and base values.yaml
-            # values-dev.yaml / values-prod.yaml are owned by deploy.yml — skip them
             cp "${SRC}/Chart.yaml" "${DST}/Chart.yaml"
             cp "${SRC}/values.yaml" "${DST}/values.yaml"
+
+            # Sync env-specific values files, preserving .image.tag already set
+            # by a previous deploy so a chart sync never reverts a live rollout.
+            for SUFFIX in dev prod; do
+              SRC_ENV="${SRC}/values-${SUFFIX}.yaml"
+              DST_ENV="${DST}/values-${SUFFIX}.yaml"
+              [ ! -f "$SRC_ENV" ] && continue
+
+              if [ -f "$DST_ENV" ]; then
+                CURRENT_TAG=$(yq '.image.tag // ""' "$DST_ENV")
+                cp "$SRC_ENV" "$DST_ENV"
+                [ -n "$CURRENT_TAG" ] && yq -i ".image.tag = \"${CURRENT_TAG}\"" "$DST_ENV"
+              else
+                cp "$SRC_ENV" "$DST_ENV"
+              fi
+            done
 
             echo "  ✓ synced ${SVC}"
           done
