@@ -228,6 +228,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # snyk/actions/node runs in Docker and mounts the workspace — node_modules
+      # must already exist or Snyk errors with "Missing node_modules folder".
+      - name: Install Node dependencies
+        if: matrix.lang == 'node'
+        working-directory: ${{ matrix.dir }}
+        run: npm ci --prefer-offline --no-audit
+
+      # Python: pip-install into the workspace so snyk/actions/python can resolve deps.
+      - name: Install Python dependencies
+        if: matrix.lang == 'python'
+        working-directory: ${{ matrix.dir }}
+        run: pip install -r requirements.txt --quiet
+
       - name: Snyk dependency scan
         uses: snyk/actions/node@master
         if: matrix.lang == 'node'
