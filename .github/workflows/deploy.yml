@@ -185,6 +185,9 @@ jobs:
           path:       k8s-manifests
 
       # ── Patch <subchart>.image.tag in environments/<env>/values.yaml ─────────
+      # ArgoCD deploys the umbrella chart at environments/<env>/ which includes
+      # all services as Helm dependencies (file://../../charts/<svc>).
+      # Image tags live at .<svc>.image.tag in the umbrella values.yaml.
       - name: Patch image tags in k8s-manifests
         env:
           TAG:                        ${{ needs.resolve-env.outputs.tag }}

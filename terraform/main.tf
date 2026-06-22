@@ -5,8 +5,9 @@
 #
 #   resource_group
 #       └── networking
-#               ├── aks          (depends on networking, monitoring)
-#               │     └── acr   (depends on aks for kubelet_identity_object_id)
+#               ├── app_gateway  (public-subnet — AGIC single entry point)
+#               │     └── aks   (depends on app_gateway for AGIC addon)
+#               │           └── acr (depends on aks for kubelet_identity_object_id)
 #               ├── bastion      (depends on networking)
 #               ├── postgres     (depends on networking)
 #               ├── cosmosdb
@@ -111,12 +112,26 @@ module "monitoring" {
 }
 
 # ---------------------------------------------------------------------------
-# 4. AKS — Private Kubernetes cluster
+# 4. Application Gateway — public entry point + AGIC ingress controller
+# ---------------------------------------------------------------------------
+module "app_gateway" {
+  source              = "./modules/app-gateway"
+  name                = "${local.prefix}-appgw"
+  resource_group_name = module.resource_group.name
+  location            = module.resource_group.location
+  subnet_id           = module.networking.subnet_ids["public-subnet"]
+  enable_waf          = var.enable_waf
+  tags                = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# 5. AKS — Private Kubernetes cluster (renumbered; was 4)
 # ---------------------------------------------------------------------------
 module "aks" {
   source                     = "./modules/aks"
   cluster_name               = "${local.prefix}-aks"
   resource_group_name        = module.resource_group.name
+  resource_group_id          = module.resource_group.id
   location                   = module.resource_group.location
   node_resource_group        = local.node_resource_group
   kubernetes_version         = var.kubernetes_version
@@ -126,7 +141,10 @@ module "aks" {
   log_analytics_workspace_id = module.monitoring.workspace_id
   user_node_count            = var.user_node_count
   user_node_vm_size          = var.user_node_vm_size
+  app_gateway_id             = module.app_gateway.id
   tags                       = local.common_tags
+
+  depends_on = [module.app_gateway]
 }
 
 # ---------------------------------------------------------------------------
@@ -264,6 +282,8 @@ module "key_vault" {
   deployer_object_id             = local.deployer_object_id
   deployer_ip                    = var.deployer_ip
   workload_identity_principal_id = module.workload_identity.principal_id
+  purge_protection_enabled       = var.key_vault_purge_protection
+  soft_delete_retention_days     = var.key_vault_retention_days
   tags                           = local.common_tags
 
   # All secret values from other modules:
@@ -291,6 +311,34 @@ module "key_vault" {
     module.doc_intelligence,
     module.communication,
   ]
+}
+
+# ---------------------------------------------------------------------------
+# 14. Function App — blob-triggered OCR and email notification
+#
+# Triggers when a file lands in health-records/{userId}/{filename}, runs OCR
+# via Document Intelligence, saves extracted text to CosmosDB, and emails
+# the patient via Azure Communication Services.
+#
+# depends_on key_vault: the access policy (for KV reference resolution) must
+# be applied before the function app is started; explicit dep ensures ordering.
+# ---------------------------------------------------------------------------
+module "function_app" {
+  source = "./modules/function-app"
+
+  function_app_name         = "${local.prefix}-func"
+  resource_group_name       = module.resource_group.name
+  location                  = module.resource_group.location
+  func_storage_account_name = "${lower(replace(var.storage_account_name_prefix, "-", ""))}fn"
+  service_plan_name         = "${local.prefix}-func-plan"
+  key_vault_id              = module.key_vault.id
+  key_vault_name            = var.key_vault_name
+  tenant_id                 = data.azurerm_client_config.current.tenant_id
+  acs_sender_address        = "DoNotReply@${module.communication.mail_from_sender_domain}"
+  app_base_url              = var.app_base_url
+  tags                      = local.common_tags
+
+  depends_on = [module.key_vault]
 }
 
 # ---------------------------------------------------------------------------

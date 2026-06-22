@@ -49,6 +49,10 @@ resource "azurerm_postgresql_flexible_server" "this" {
   delegated_subnet_id = var.postgres_subnet_id
   private_dns_zone_id = azurerm_private_dns_zone.postgres.id
 
+  # VNet injection and public access are mutually exclusive.
+  # Must be false when delegated_subnet_id is set.
+  public_network_access_enabled = false
+
   storage_mb = 32768 # 32 GB — minimum for Flexible Server
 
   # B_Standard_B1ms: cheapest burstable SKU, suitable for dev/demo.
@@ -62,6 +66,12 @@ resource "azurerm_postgresql_flexible_server" "this" {
   # high_availability { mode = "ZoneRedundant" }
 
   tags = var.tags
+
+  # Azure auto-assigns an availability zone on creation; ignore it so Terraform
+  # doesn't try to change it on subsequent applies (requires HA to swap zones).
+  lifecycle {
+    ignore_changes = [zone]
+  }
 
   # Flexible server requires the private DNS zone VNet link to exist first
   # so it can register its FQDN during provisioning.

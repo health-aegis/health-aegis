@@ -1,0 +1,6 @@
+apiVersion: v2
+name: diagnostic-agent-service
+description: Aegis Health — Diagnostic Agent Service (AI diagnostic pipeline)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

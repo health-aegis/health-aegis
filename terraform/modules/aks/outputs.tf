@@ -48,3 +48,8 @@ output "kubelet_identity_client_id" {
   description = "Client ID of the kubelet managed identity"
   value       = azurerm_kubernetes_cluster.this.kubelet_identity[0].client_id
 }
+
+output "agic_identity_object_id" {
+  description = "Object ID of the AGIC managed identity — used to grant it access to the App Gateway"
+  value       = azurerm_kubernetes_cluster.this.ingress_application_gateway[0].ingress_application_gateway_identity[0].object_id
+}

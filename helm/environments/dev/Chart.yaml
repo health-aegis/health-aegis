@@ -1,0 +1,43 @@
+apiVersion: v2
+name: aegis-dev
+description: Aegis Health — Dev Environment Umbrella Chart
+type: application
+version: 1.0.0
+
+dependencies:
+  - name: api-gateway
+    version: "1.0.0"
+    repository: "file://../../charts/api-gateway"
+  - name: health-records-service
+    version: "1.0.0"
+    repository: "file://../../charts/health-records-service"
+  - name: medication-service
+    version: "1.0.0"
+    repository: "file://../../charts/medication-service"
+  - name: ai-service
+    version: "1.0.0"
+    repository: "file://../../charts/ai-service"
+  - name: imaging-service
+    version: "1.0.0"
+    repository: "file://../../charts/imaging-service"
+  - name: diagnostic-agent-service
+    version: "1.0.0"
+    repository: "file://../../charts/diagnostic-agent-service"
+  - name: coordinator-agent
+    version: "1.0.0"
+    repository: "file://../../charts/coordinator-agent"
+  - name: image-analysis-agent
+    version: "1.0.0"
+    repository: "file://../../charts/image-analysis-agent"
+  - name: patient-history-agent
+    version: "1.0.0"
+    repository: "file://../../charts/patient-history-agent"
+  - name: notification-worker
+    version: "1.0.0"
+    repository: "file://../../charts/notification-worker"
+  - name: client
+    version: "1.0.0"
+    repository: "file://../../charts/client"
+  - name: postgres
+    version: "1.0.0"
+    repository: "file://../../charts/postgres"

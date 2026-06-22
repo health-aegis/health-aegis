@@ -112,13 +112,13 @@ variable "user_node_vm_size" {
 variable "kubernetes_namespace" {
   description = "Kubernetes namespace for Aegis application workloads"
   type        = string
-  default     = "aegis"
+  default     = "aegis-dev"
 }
 
 variable "kubernetes_service_account_name" {
   description = "Name of the Kubernetes ServiceAccount to federate with workload identity"
   type        = string
-  default     = "aegis-workload-sa"
+  default     = "aegis-workload-identity"
 }
 
 # ---------------------------------------------------------------------------
@@ -250,4 +250,37 @@ variable "azure_ai_key" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+# ---------------------------------------------------------------------------
+# App Gateway
+# ---------------------------------------------------------------------------
+variable "enable_waf" {
+  description = "Enable WAF_v2 SKU with OWASP 3.2 Prevention rules on the Application Gateway. Set true for production."
+  type        = bool
+  default     = false
+}
+
+# ---------------------------------------------------------------------------
+# Key Vault hardening
+# ---------------------------------------------------------------------------
+variable "key_vault_purge_protection" {
+  description = "Enable purge protection on Key Vault. Once enabled, cannot be disabled. Use true for production."
+  type        = bool
+  default     = false
+}
+
+variable "key_vault_retention_days" {
+  description = "Soft-delete retention period in days (7-90). Use 90 for production."
+  type        = number
+  default     = 7
+}
+
+# ---------------------------------------------------------------------------
+# Function App
+# ---------------------------------------------------------------------------
+variable "app_base_url" {
+  description = "Base URL of the Aegis web application (used in notification email links)"
+  type        = string
+  default     = "https://aegishealth.io"
 }

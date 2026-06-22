@@ -1,0 +1,26 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: patient-history-agent-netpol
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "patient-history-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "patient-history-agent.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: coordinator-agent
+      ports:
+        - protocol: TCP
+          port: 8002
+  egress:
+    - {}
+{{- end }}

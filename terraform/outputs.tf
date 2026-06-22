@@ -2,6 +2,16 @@
 # Root outputs — key values needed for post-deployment configuration
 # ---------------------------------------------------------------------------
 
+output "app_gateway_public_ip" {
+  description = "Public IP address of the Application Gateway — point your DNS here"
+  value       = module.app_gateway.public_ip_address
+}
+
+output "app_gateway_id" {
+  description = "Resource ID of the Application Gateway"
+  value       = module.app_gateway.id
+}
+
 output "resource_group_name" {
   description = "Name of the main Aegis resource group"
   value       = module.resource_group.name
@@ -222,6 +232,28 @@ output "next_steps" {
        Connect at: https://portal.azure.com → Bastion
        (Deploy a jump box VM in the aks-subnet or pe-subnet first)
 
+    7. DEPLOY FUNCTION CODE (OCR + notification):
+         cd infra/azure-function
+         npm install
+         func azure functionapp publish ${module.function_app.function_app_name} --javascript
+
+       ACS sender address (set in tfvars after first apply):
+         Azure Portal → ${module.function_app.function_app_name} → Communication Services
+                      → Email → Domains → MailFrom column
+
     ========================================================
   EOT
+}
+
+# ---------------------------------------------------------------------------
+# Function App
+# ---------------------------------------------------------------------------
+output "function_app_name" {
+  description = "Name of the Azure Function App"
+  value       = module.function_app.function_app_name
+}
+
+output "function_app_hostname" {
+  description = "Default hostname of the Function App"
+  value       = module.function_app.function_app_hostname
 }

@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-nginx-config
+  namespace: aegis-prod
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        location /api/ {
+            proxy_pass         http://api-gateway:5000/api/;
+            proxy_http_version 1.1;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   Connection        "";
+            proxy_read_timeout 120s;
+        }
+
+        location /healthz {
+            access_log off;
+            return 200 "ok\n";
+            add_header Content-Type text/plain;
+        }
+
+        error_page 500 502 503 504 /50x.html;
+        location = /50x.html { root /usr/share/nginx/html; }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aegis-config
+  namespace: aegis-prod
+data:
+  PORT: "5000"
+  HEALTH_RECORDS_SERVICE_URL: "http://health-records-service:5001"
+  MEDICATION_SERVICE_URL: "http://medication-service:5002"
+  AI_SERVICE_URL: "http://ai-service:5003"
+  IMAGING_SERVICE_URL: "http://imaging-service:5004"
+  DIAGNOSTICS_SERVICE_URL: "http://diagnostic-agent-service:5005"
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  CORS_ORIGIN: "*"

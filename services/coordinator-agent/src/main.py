@@ -4,7 +4,7 @@ coordinator-agent — Aegis Health Multi-Agent Platform
 Orchestrates the multi-agent pipeline:
   1. Calls image-analysis-agent and patient-history-agent in parallel via HTTP.
   2. Compiles their outputs into a structured prompt.
-  3. Calls Azure AI Foundry (gpt-4o-mini / gpt-4o).
+  3. Calls Gemini AI (gemini-1.5-flash / gemini-1.5-pro / gemini-2.0-flash).
   4. Returns a patient-friendly synthesized response.
 
 POST /analyze  { user_id: str, query: str }
@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-from openai import AzureOpenAI
+import google.generativeai as genai
 
 app = FastAPI(title="Coordinator Agent — Aegis Health")
 
@@ -29,40 +29,26 @@ app.add_middleware(
 )
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-AZURE_AI_ENDPOINT = os.getenv("AZURE_AI_ENDPOINT", "")
-AZURE_AI_KEY      = os.getenv("AZURE_AI_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# Agent URLs — set inline in K8s deployment env block (no ConfigMap needed)
 IMAGE_AGENT_URL   = os.getenv("IMAGE_ANALYSIS_AGENT_URL",  "http://image-analysis-agent:8001")
 HISTORY_AGENT_URL = os.getenv("PATIENT_HISTORY_AGENT_URL", "http://patient-history-agent:8002")
 
-# Timeout for sub-agent calls
 REQUEST_TIMEOUT = 25.0
 
-# Azure AI Foundry model fallback chain (all available on this endpoint)
-AI_MODELS = ["gpt-4o-mini", "gpt-4o", "Phi-4"]
+GEMINI_MODELS = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
 
-# Configure Azure AI Foundry client
-ai_client = None
-ai_ready   = False
+ai_ready = False
 
-if AZURE_AI_KEY and AZURE_AI_ENDPOINT:
+if GEMINI_API_KEY:
     try:
-        endpoint = AZURE_AI_ENDPOINT
-        if endpoint.endswith("/openai/v1"):
-            endpoint = endpoint[:-10]
-
-        ai_client = AzureOpenAI(
-            api_key=AZURE_AI_KEY,
-            azure_endpoint=endpoint,
-            api_version="2024-02-15-preview"
-        )
+        genai.configure(api_key=GEMINI_API_KEY)
         ai_ready = True
-        print(f"✅ [coordinator-agent] Azure AI Foundry configured → {endpoint}")
+        print("✅ [coordinator-agent] Gemini AI configured")
     except Exception as e:
-        print(f"⚠️  [coordinator-agent] Azure AI Foundry setup failed: {e}")
+        print(f"⚠️  [coordinator-agent] Gemini setup failed: {e}")
 else:
-    print("ℹ️  [coordinator-agent] AZURE_AI_KEY / AZURE_AI_ENDPOINT not set — fallback response will be used")
+    print("ℹ️  [coordinator-agent] GEMINI_API_KEY not set — fallback will be used")
 
 
 # ─── Request/Response Models ──────────────────────────────────────────────────
@@ -223,26 +209,22 @@ def build_prompt(query: str, image_data: dict, history_data: dict) -> str:
 # ─── AI Caller ────────────────────────────────────────────────────────────────
 def call_ai(prompt: str) -> tuple[str, str]:
     """Returns (response_text, model_used)"""
-    if not ai_ready or ai_client is None:
+    if not ai_ready:
         return (
-            "⚠️ AI synthesis is currently unavailable (Azure AI Foundry not configured). "
+            "⚠️ AI synthesis is currently unavailable (Gemini API key not configured). "
             "Your data was retrieved by the specialist agents. "
             "Please check your Medical Records and Imaging sections for the detailed findings.",
             "none"
         )
 
     last_error = None
-    for model_name in AI_MODELS:
+    for model_name in GEMINI_MODELS:
         try:
-            response = ai_client.chat.completions.create(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=600,
-                temperature=0.4,
-            )
-            text = response.choices[0].message.content
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            text = response.text
             if text and text.strip():
-                print(f"✅ [coordinator-agent] Azure AI response via {model_name}")
+                print(f"✅ [coordinator-agent] Gemini response via {model_name}")
                 return text, model_name
         except Exception as e:
             last_error = e
@@ -280,7 +262,7 @@ async def analyze(req: AnalyzeRequest):
         f"meds={history_data.get('medication_count', 0)}"
     )
 
-    # Step 2 — Build prompt and call Azure AI Foundry
+    # Step 2 — Build prompt and call Gemini AI
     prompt = build_prompt(req.query, image_data, history_data)
     response_text, model_used = call_ai(prompt)
 
@@ -305,8 +287,7 @@ def health_check():
     return {
         "status": "ok",
         "service": "coordinator-agent",
-        "ai_provider": "Azure AI Foundry" if ai_ready else "not configured",
-        "endpoint": AZURE_AI_ENDPOINT,
+        "ai_provider": "Gemini" if ai_ready else "not configured",
         "image_agent_url": IMAGE_AGENT_URL,
         "history_agent_url": HISTORY_AGENT_URL,
     }
@@ -360,6 +341,6 @@ def identity_check():
         "kv_secrets_mounted":   kv_mounted,
         "kv_secret_names":      kv_files,
         "no_hardcoded_key":     True,
-        "note_azure_ai":        "AZURE_AI_KEY sourced from Key Vault via CSI — not hardcoded",
+        "note_ai":              "GEMINI_API_KEY sourced from Key Vault via CSI — not hardcoded",
         "verification_status":  "PASS" if (wi_active and kv_mounted) else "FAIL",
     }

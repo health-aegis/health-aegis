@@ -1,0 +1,72 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "aegis.fullname" . }}-ingress
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    kubernetes.io/ingress.class: azure/application-gateway
+  labels:
+    {{- include "aegis.labels" . | nindent 4 }}
+spec:
+  ingressClassName: azure-application-gateway
+  rules:
+    - http:
+        paths:
+          - path: /api/history
+            pathType: Prefix
+            backend:
+              service:
+                name: health-records-service
+                port:
+                  number: 5001
+          - path: /api/appointments
+            pathType: Prefix
+            backend:
+              service:
+                name: health-records-service
+                port:
+                  number: 5001
+          - path: /api/medications
+            pathType: Prefix
+            backend:
+              service:
+                name: medication-service
+                port:
+                  number: 5002
+          - path: /api/caregiver
+            pathType: Prefix
+            backend:
+              service:
+                name: medication-service
+                port:
+                  number: 5002
+          - path: /api/status
+            pathType: Prefix
+            backend:
+              service:
+                name: medication-service
+                port:
+                  number: 5002
+          - path: /api/ai
+            pathType: Prefix
+            backend:
+              service:
+                name: ai-service
+                port:
+                  number: 5003
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.ingress.apiBackend.name }}
+                port:
+                  number: {{ .Values.ingress.apiBackend.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.frontend.serviceName }}
+                port:
+                  number: {{ .Values.frontend.port }}
+{{- end }}

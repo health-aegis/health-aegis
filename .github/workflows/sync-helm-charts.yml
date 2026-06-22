@@ -1,0 +1,132 @@
+# ---------------------------------------------------------------------------
+# Aegis Health — Helm Chart Sync
+#
+# Syncs chart templates, Chart.yaml, values.yaml, values-dev.yaml, and
+# values-prod.yaml from this repo's helm/charts/<service>/ into
+# health-aegis/k8s-manifests/charts/<service>/ whenever those files change.
+#
+# Static config (replicaCount, resources, HPA, acrLoginServer) comes from
+# this repo's values-<env>.yaml files.  The existing .image.tag in the
+# k8s-manifests copy is PRESERVED so a sync never reverts a live deployment.
+# Image tag bumps are still written by deploy.yml.
+#
+# Required secrets:
+#   GITOPS_PAT — PAT with repo write scope on health-aegis/k8s-manifests
+# ---------------------------------------------------------------------------
+
+name: Sync Helm Charts
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'helm/charts/**'
+      - 'helm/environments/**'
+
+concurrency:
+  group: sync-charts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: "Sync chart templates → k8s-manifests"
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout health-aegis
+        uses: actions/checkout@v4
+
+      - name: Checkout k8s-manifests
+        uses: actions/checkout@v4
+        with:
+          repository: health-aegis/k8s-manifests
+          token:      ${{ secrets.GITOPS_PAT }}
+          path:       k8s-manifests
+
+      - name: Sync chart templates
+        run: |
+          SERVICES=(
+            api-gateway
+            health-records-service
+            medication-service
+            ai-service
+            notification-worker
+            imaging-service
+            diagnostic-agent-service
+            coordinator-agent
+            image-analysis-agent
+            patient-history-agent
+            client
+          )
+
+          # ── Sync per-service charts ──────────────────────────────────────────
+          for SVC in "${SERVICES[@]}"; do
+            SRC="helm/charts/${SVC}"
+            DST="k8s-manifests/charts/${SVC}"
+
+            if [ ! -d "$SRC" ] || [ ! -d "$DST" ]; then
+              continue
+            fi
+
+            # Sync templates (Deployments, Services, NetworkPolicies, HPAs …)
+            rsync -a --delete "${SRC}/templates/" "${DST}/templates/"
+
+            # Sync Chart.yaml and base values.yaml only
+            cp "${SRC}/Chart.yaml" "${DST}/Chart.yaml"
+            cp "${SRC}/values.yaml" "${DST}/values.yaml"
+
+            echo "  ✓ synced charts/${SVC}"
+          done
+
+          # ── Sync environment umbrella charts ─────────────────────────────────
+          # ArgoCD deploys environments/<env>/ which is an umbrella chart.
+          # values.yaml here holds all image tags (managed by deploy.yml) plus
+          # static config — sync Chart.yaml and templates always; for values.yaml
+          # copy static config but restore any image tags deploy.yml already set.
+          for ENV_NAME in dev prod; do
+            SRC="helm/environments/${ENV_NAME}"
+            DST="k8s-manifests/environments/${ENV_NAME}"
+
+            [ ! -d "$SRC" ] && continue
+            mkdir -p "${DST}/templates"
+
+            cp "${SRC}/Chart.yaml" "${DST}/Chart.yaml"
+            rsync -a --delete "${SRC}/templates/" "${DST}/templates/"
+
+            if [ -f "${DST}/values.yaml" ]; then
+              # Save current image tags — deploy.yml owns these values
+              yq 'to_entries | map(select(.value | type == "!!map") | select(.value | has("image"))) | from_entries | with_entries(.value = {"image": {"tag": .value.image.tag}})' \
+                "${DST}/values.yaml" > /tmp/saved-tags.yaml
+
+              cp "${SRC}/values.yaml" "${DST}/values.yaml"
+
+              # Restore saved image tags on top of updated static config
+              yq -i '. *+ load("/tmp/saved-tags.yaml")' "${DST}/values.yaml"
+            else
+              cp "${SRC}/values.yaml" "${DST}/values.yaml"
+            fi
+
+            echo "  ✓ synced environments/${ENV_NAME}"
+          done
+
+      - name: Commit and push to k8s-manifests
+        working-directory: k8s-manifests
+        env:
+          BRANCH: ${{ github.ref_name }}
+          SHA:    ${{ github.sha }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add charts/ environments/
+          git diff --cached --quiet \
+            && echo "No chart or environment changes to sync." \
+            && exit 0
+
+          git commit -m "chore(charts): sync Helm templates from health-aegis [${BRANCH}] [skip ci]"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main

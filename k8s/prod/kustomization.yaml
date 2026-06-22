@@ -13,6 +13,14 @@ patches:
     target:
       kind: Deployment
       name: api-gateway
+  - path: patches/replicas.yaml
+    target:
+      kind: Deployment
+      name: health-records-service
+  - path: patches/replicas-medication.yaml
+    target:
+      kind: Deployment
+      name: medication-service
 
 # Image registry for prod environment (aegisprodacr).
 # Tags are updated by the CD pipeline via: kustomize edit set image <name>=<acr>/<name>:<sha-tag>
