@@ -36,14 +36,18 @@ export const updateHistory = async (req: Request, res: Response) => {
 
 export const deleteHistory = async (req: Request, res: Response) => {
   try {
+    console.log(`[deleteHistory] id=${req.params.id} reqUserId=${req.userId}`);
     const record = await MedicalRecordModel.findById(req.params.id);
+    console.log(`[deleteHistory] found=${!!record} storedUserId=${record?.userId}`);
     if (!record) return res.status(404).json({ error: 'Record not found' });
     if (record.userId?.toString() !== req.userId?.toString()) {
+      console.log(`[deleteHistory] userId mismatch: stored=${record.userId} req=${req.userId}`);
       return res.status(403).json({ error: 'Not authorized' });
     }
     await MedicalRecordModel.findByIdAndDelete(req.params.id);
     res.json({ message: 'Medical record deleted' });
   } catch (error: any) {
+    console.log(`[deleteHistory] error: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 };
