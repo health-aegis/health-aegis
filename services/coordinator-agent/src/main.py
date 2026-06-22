@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-from openai import OpenAI
+import google.generativeai as genai
 
 app = FastAPI(title="Coordinator Agent — Aegis Health")
 
@@ -29,39 +29,28 @@ app.add_middleware(
 )
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-AZURE_AI_ENDPOINT = os.getenv("AZURE_AI_ENDPOINT", "")
-AZURE_AI_KEY      = os.getenv("AZURE_AI_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# Agent URLs — set inline in K8s deployment env block (no ConfigMap needed)
 IMAGE_AGENT_URL   = os.getenv("IMAGE_ANALYSIS_AGENT_URL",  "http://image-analysis-agent:8001")
 HISTORY_AGENT_URL = os.getenv("PATIENT_HISTORY_AGENT_URL", "http://patient-history-agent:8002")
 
-# Timeout for sub-agent calls
 REQUEST_TIMEOUT = 25.0
 
-# Azure AI Foundry model fallback chain (all available on this endpoint)
-AI_MODELS = ["gpt-4o-mini", "gpt-4o", "Phi-4"]
+GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"]
 
-# Configure Azure AI Foundry client
 ai_client = None
 ai_ready   = False
 
-if AZURE_AI_KEY and AZURE_AI_ENDPOINT:
+if GEMINI_API_KEY:
     try:
-        # Use openai.OpenAI with base_url — matches Azure AI Foundry project endpoint
-        # pattern (no api_version needed, works with /api/projects/... endpoints).
-        # Azure AI Foundry project endpoints expose the Responses API (not Chat
-        # Completions). No api-version query param needed for the Responses API.
-        ai_client = OpenAI(
-            base_url=AZURE_AI_ENDPOINT,
-            api_key=AZURE_AI_KEY,
-        )
+        genai.configure(api_key=GEMINI_API_KEY)
+        ai_client = genai.GenerativeModel("gemini-1.5-flash")
         ai_ready = True
-        print(f"✅ [coordinator-agent] Azure AI Foundry configured → {AZURE_AI_ENDPOINT}")
+        print("✅ [coordinator-agent] Gemini AI configured")
     except Exception as e:
-        print(f"⚠️  [coordinator-agent] Azure AI Foundry setup failed: {e}")
+        print(f"⚠️  [coordinator-agent] Gemini setup failed: {e}")
 else:
-    print("ℹ️  [coordinator-agent] AZURE_AI_KEY / AZURE_AI_ENDPOINT not set — fallback response will be used")
+    print("ℹ️  [coordinator-agent] GEMINI_API_KEY not set — fallback response will be used")
 
 
 # ─── Request/Response Models ──────────────────────────────────────────────────
@@ -231,17 +220,13 @@ def call_ai(prompt: str) -> tuple[str, str]:
         )
 
     last_error = None
-    for model_name in AI_MODELS:
+    for model_name in GEMINI_MODELS:
         try:
-            # Azure AI Foundry project endpoints use the Responses API.
-            response = ai_client.responses.create(
-                model=model_name,
-                input=prompt,
-                max_output_tokens=600,
-            )
-            text = response.output_text
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            text = response.text
             if text and text.strip():
-                print(f"✅ [coordinator-agent] Azure AI response via {model_name}")
+                print(f"✅ [coordinator-agent] Gemini response via {model_name}")
                 return text, model_name
         except Exception as e:
             last_error = e
@@ -304,8 +289,7 @@ def health_check():
     return {
         "status": "ok",
         "service": "coordinator-agent",
-        "ai_provider": "Azure AI Foundry" if ai_ready else "not configured",
-        "endpoint": AZURE_AI_ENDPOINT,
+        "ai_provider": "Gemini" if ai_ready else "not configured",
         "image_agent_url": IMAGE_AGENT_URL,
         "history_agent_url": HISTORY_AGENT_URL,
     }
