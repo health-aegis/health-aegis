@@ -443,27 +443,14 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Login to ACR
-        run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            az acr login --name ${{ secrets.PROD_ACR_NAME }}
-          else
-            az acr login --name ${{ secrets.ACR_NAME }}
-          fi
+        run: az acr login --name ${{ secrets.ACR_NAME }}
 
       - name: Push image
         run: |
-          SVC="${{ matrix.service }}"
-          TAG="${{ needs.prepare.outputs.tag }}"
-          DEV_ACR="${{ secrets.ACR_NAME }}.azurecr.io"
-
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            # Re-tag from dev ACR name (used during build) to prod ACR name
-            PROD_ACR="${{ secrets.PROD_ACR_NAME }}.azurecr.io"
-            docker tag "${DEV_ACR}/${SVC}:${TAG}" "${PROD_ACR}/${SVC}:${TAG}"
-            docker push "${PROD_ACR}/${SVC}:${TAG}"
-          else
-            docker push "${DEV_ACR}/${SVC}:${TAG}"
-          fi
+          # Both dev and prod use the same ACR (aegistestacr).
+          # dev images carry sha-XXXXXXX tags; prod images carry vX.Y.Z semver tags.
+          ACR="${{ secrets.ACR_NAME }}.azurecr.io"
+          docker push "${ACR}/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB 8 — RELEASE  (GitHub Release — main only, after all pushes succeed)
