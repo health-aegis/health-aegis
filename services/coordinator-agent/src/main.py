@@ -53,6 +53,7 @@ if AZURE_AI_KEY and AZURE_AI_ENDPOINT:
         ai_client = OpenAI(
             base_url=AZURE_AI_ENDPOINT,
             api_key=AZURE_AI_KEY,
+            default_query={"api-version": "2025-01-01-preview"},
         )
         ai_ready = True
         print(f"✅ [coordinator-agent] Azure AI Foundry configured → {AZURE_AI_ENDPOINT}")
