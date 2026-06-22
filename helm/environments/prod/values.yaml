@@ -6,10 +6,10 @@
 
 # ── Shared infrastructure ──────────────────────────────────────────────
 workloadIdentity:
-  clientId: ""  # set after prod terraform apply
+  clientId: "2ae07dc6-82dc-4b66-b0c1-c7bf9c974d88"
 
 keyVault:
-  name: aegis-kv-prod
+  name: aegis-kv-test
   tenantId: "3076b773-f5d9-413e-9564-7deaa3d0d7b7"
   secrets:
     - kvName: kv-mongodb-uri
