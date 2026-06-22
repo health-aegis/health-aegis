@@ -184,10 +184,13 @@ jobs:
           token:      ${{ secrets.GITOPS_PAT }}
           path:       k8s-manifests
 
-      # ── Patch <subchart>.image.tag in environments/<env>/values.yaml ─────────
-      # ArgoCD deploys the umbrella chart at environments/<env>/ which includes
-      # all services as Helm dependencies (file://../../charts/<svc>).
-      # Image tags live at .<svc>.image.tag in the umbrella values.yaml.
+      # ── Update image tags in environments/<env>/values.yaml ─────────────────
+      # DEV:  patch only services whose source files changed (fast, per-commit).
+      # PROD: promote — copy every image.tag from dev values into prod values.
+      #       This is the GitOps promotion pattern: prod always gets exactly
+      #       what dev has already validated, regardless of which files changed
+      #       in the triggering commit. Avoids the silent no-op when only
+      #       infra/CI files changed but a prod deploy is requested.
       - name: Patch image tags in k8s-manifests
         env:
           TAG:                        ${{ needs.resolve-env.outputs.tag }}
@@ -205,28 +208,62 @@ jobs:
           CHANGED_client:             ${{ steps.filter.outputs.client }}
         run: |
           VALUES="k8s-manifests/environments/${ENV}/values.yaml"
+
+          # Bootstrap environment directory from the source repo if it doesn't exist yet.
           if [ ! -f "$VALUES" ]; then
-            echo "⚠ ${VALUES} not found — nothing to patch"; exit 0
+            SRC="helm/environments/${ENV}"
+            if [ ! -d "$SRC" ]; then
+              echo "⚠ No source at ${SRC} — cannot bootstrap"; exit 1
+            fi
+            echo "⚕ Bootstrapping k8s-manifests/environments/${ENV}/"
+            mkdir -p "k8s-manifests/environments/${ENV}/templates"
+            cp "${SRC}/Chart.yaml" "k8s-manifests/environments/${ENV}/Chart.yaml"
+            rsync -a "${SRC}/templates/" "k8s-manifests/environments/${ENV}/templates/"
+            cp "${SRC}/values.yaml" "${VALUES}"
           fi
 
-          patch_tag() {
-            local SVC="$1" CHANGED="$2"
-            [ "$CHANGED" != "true" ] && return
-            yq -i ".\"${SVC}\".image.tag = \"${TAG}\"" "${VALUES}"
-            echo "  ✓ ${SVC}.image.tag → ${TAG}"
-          }
+          if [ "$ENV" = "prod" ]; then
+            # ── PROD: promote image tags from dev values ──────────────────────
+            # Reads each .image.tag from environments/dev/values.yaml and writes
+            # it into prod. No dependency on which files changed in this commit.
+            DEV_VALUES="k8s-manifests/environments/dev/values.yaml"
+            if [ ! -f "$DEV_VALUES" ]; then
+              echo "⚠ Dev values not found at ${DEV_VALUES} — cannot promote to prod"
+              exit 1
+            fi
+            SERVICES=(
+              api-gateway health-records-service medication-service ai-service
+              notification-worker imaging-service diagnostic-agent-service
+              coordinator-agent image-analysis-agent patient-history-agent client
+            )
+            for SVC in "${SERVICES[@]}"; do
+              DEV_TAG=$(yq ".\"${SVC}\".image.tag // \"\"" "$DEV_VALUES")
+              if [ -n "$DEV_TAG" ] && [ "$DEV_TAG" != "null" ] && [ "$DEV_TAG" != "latest" ]; then
+                yq -i ".\"${SVC}\".image.tag = \"${DEV_TAG}\"" "${VALUES}"
+                echo "  ✓ ${SVC}.image.tag → ${DEV_TAG} (promoted from dev)"
+              fi
+            done
+          else
+            # ── DEV: patch only services whose source files changed ───────────
+            patch_tag() {
+              local SVC="$1" CHANGED="$2"
+              [ "$CHANGED" != "true" ] && return
+              yq -i ".\"${SVC}\".image.tag = \"${TAG}\"" "${VALUES}"
+              echo "  ✓ ${SVC}.image.tag → ${TAG}"
+            }
 
-          patch_tag api-gateway              "$CHANGED_api_gateway"
-          patch_tag health-records-service   "$CHANGED_health_records"
-          patch_tag medication-service       "$CHANGED_medication"
-          patch_tag ai-service               "$CHANGED_ai"
-          patch_tag notification-worker      "$CHANGED_notification"
-          patch_tag imaging-service          "$CHANGED_imaging"
-          patch_tag diagnostic-agent-service "$CHANGED_diagnostic"
-          patch_tag coordinator-agent        "$CHANGED_coordinator"
-          patch_tag image-analysis-agent     "$CHANGED_image_analysis"
-          patch_tag patient-history-agent    "$CHANGED_patient_history"
-          patch_tag client                   "$CHANGED_client"
+            patch_tag api-gateway              "$CHANGED_api_gateway"
+            patch_tag health-records-service   "$CHANGED_health_records"
+            patch_tag medication-service       "$CHANGED_medication"
+            patch_tag ai-service               "$CHANGED_ai"
+            patch_tag notification-worker      "$CHANGED_notification"
+            patch_tag imaging-service          "$CHANGED_imaging"
+            patch_tag diagnostic-agent-service "$CHANGED_diagnostic"
+            patch_tag coordinator-agent        "$CHANGED_coordinator"
+            patch_tag image-analysis-agent     "$CHANGED_image_analysis"
+            patch_tag patient-history-agent    "$CHANGED_patient_history"
+            patch_tag client                   "$CHANGED_client"
+          fi
 
       # ── Commit and push to k8s-manifests ────────────────────────────────────
       - name: Commit image tag bump to k8s-manifests
