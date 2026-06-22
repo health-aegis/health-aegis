@@ -5,7 +5,7 @@ RUN npm install --omit=dev
 
 FROM node:20-alpine AS runner
 WORKDIR /app
-RUN apk update && apk upgrade --no-cache && apk add --no-cache wget
+RUN apk update && apk upgrade --no-cache && apk add --no-cache wget && npm install -g npm@latest --quiet
 ENV NODE_ENV=production
 COPY --from=builder /app/node_modules ./node_modules
 COPY package.json ./
