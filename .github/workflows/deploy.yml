@@ -205,8 +205,19 @@ jobs:
           CHANGED_client:             ${{ steps.filter.outputs.client }}
         run: |
           VALUES="k8s-manifests/environments/${ENV}/values.yaml"
+
+          # Bootstrap environment directory from source repo on first prod deploy.
+          # After this, sync-helm-charts.yml keeps it up to date on chart changes.
           if [ ! -f "$VALUES" ]; then
-            echo "⚠ ${VALUES} not found — nothing to patch"; exit 0
+            SRC="helm/environments/${ENV}"
+            if [ ! -d "$SRC" ]; then
+              echo "⚠ No source at ${SRC} — nothing to patch"; exit 0
+            fi
+            echo "⚕ Bootstrapping k8s-manifests/environments/${ENV}/ from source repo"
+            mkdir -p "k8s-manifests/environments/${ENV}/templates"
+            cp "${SRC}/Chart.yaml" "k8s-manifests/environments/${ENV}/Chart.yaml"
+            rsync -a "${SRC}/templates/" "k8s-manifests/environments/${ENV}/templates/"
+            cp "${SRC}/values.yaml" "${VALUES}"
           fi
 
           patch_tag() {
