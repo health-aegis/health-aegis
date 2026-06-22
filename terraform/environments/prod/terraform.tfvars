@@ -81,8 +81,8 @@ enable_waf = true
 
 # ── Key Vault (prod hardening) ─────────────────────────────────────────────────
 # Purge protection prevents permanent deletion for soft_delete_retention_days.
-key_vault_purge_protection  = true
-key_vault_retention_days    = 90
+key_vault_purge_protection = true
+key_vault_retention_days   = 90
 
 # ── Function App ──────────────────────────────────────────────────────────────
 # acs_sender_address is derived automatically from the ACS email domain — no manual step needed.
