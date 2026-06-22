@@ -35,15 +35,15 @@ on:
   workflow_run:
     workflows: ["Build"]
     types: [completed]
-    branches: [develop]
+    branches: [main, develop]
 
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment (dev only — use git tag for prod)"
+        description: "Target environment"
         required: true
         type: choice
-        options: [dev]
+        options: [dev, prod]
         default: dev
       image_tag:
         description: "Override image tag (blank = derive from commit SHA)"
@@ -51,7 +51,7 @@ on:
         type: string
 
 concurrency:
-  group: deploy-${{ github.event.workflow_run.head_branch || 'dev' }}
+  group: deploy-${{ github.event.workflow_run.head_branch || inputs.environment }}
   cancel-in-progress: false
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -118,22 +118,50 @@ jobs:
       - name: Resolve tag and environment
         id: out
         run: |
+          BRANCH="${{ github.event.workflow_run.head_branch || inputs.environment }}"
           SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
-          TAG="${{ inputs.image_tag || format('sha-{0}', '') }}"
-          if [ -z "${{ inputs.image_tag }}" ]; then
+
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          else
             TAG="sha-${SHA:0:7}"
           fi
+
+          if [[ "${BRANCH}" == "main" || "${{ inputs.environment }}" == "prod" ]]; then
+            ENV="prod"
+          else
+            ENV="dev"
+          fi
+
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "env=dev"    >> "$GITHUB_OUTPUT"
-          echo "Resolved → env=dev  tag=${TAG}"
+          echo "env=${ENV}" >> "$GITHUB_OUTPUT"
+          echo "Resolved → env=${ENV}  tag=${TAG}"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOBS 2–12 — PER-SERVICE CD  (calls common-cd.yml, skipped if not changed)
+# JOB 2 — AWAIT APPROVAL  (prod only — skipped entirely for dev)
+# Configure required reviewers: Settings → Environments → production
+# ─────────────────────────────────────────────────────────────────────────────
+  await-approval:
+    name: "CD – Await production approval"
+    runs-on: ubuntu-latest
+    needs: resolve-env
+    if: needs.resolve-env.outputs.env == 'prod'
+    environment: production
+    steps:
+      - name: Approval granted
+        run: echo "✅ Production deployment approved — proceeding."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOBS 3–13 — PER-SERVICE CD  (calls common-cd.yml, skipped if not changed)
 # ─────────────────────────────────────────────────────────────────────────────
 
   deploy-api-gateway:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_api_gateway == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_api_gateway == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   api-gateway
@@ -144,8 +172,12 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
   deploy-health-records:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_health_records == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_health_records == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   health-records-service
@@ -156,8 +188,12 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
   deploy-medication:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_medication == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_medication == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   medication-service
@@ -168,8 +204,12 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
   deploy-ai:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_ai == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_ai == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   ai-service
@@ -180,8 +220,12 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
   deploy-notification:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_notification == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_notification == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   notification-worker
@@ -192,8 +236,12 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
   deploy-imaging:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_imaging == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_imaging == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   imaging-service
@@ -204,8 +252,12 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
   deploy-diagnostic:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_diagnostic == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_diagnostic == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   diagnostic-agent-service
@@ -216,8 +268,12 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
   deploy-coordinator:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_coordinator == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_coordinator == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   coordinator-agent
@@ -228,8 +284,12 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
   deploy-image-analysis:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_image_analysis == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_image_analysis == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   image-analysis-agent
@@ -240,8 +300,12 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
   deploy-patient-history:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_patient_history == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_patient_history == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   patient-history-agent
@@ -252,8 +316,12 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
   deploy-client:
-    needs: resolve-env
-    if: needs.resolve-env.outputs.changed_client == 'true'
+    needs: [resolve-env, await-approval]
+    if: |
+      always() &&
+      needs.resolve-env.result == 'success' &&
+      needs.resolve-env.outputs.changed_client == 'true' &&
+      (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
       service-name:   client
@@ -264,13 +332,14 @@ jobs:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 13 — NOTIFY  (always)
+# JOB 14 — NOTIFY  (always)
 # ─────────────────────────────────────────────────────────────────────────────
   notify:
     name: "Notify"
     runs-on: ubuntu-latest
     needs:
       - resolve-env
+      - await-approval
       - deploy-api-gateway
       - deploy-health-records
       - deploy-medication
@@ -304,13 +373,13 @@ jobs:
           password:       ${{ secrets.SMTP_PASSWORD }}
           to:             ${{ secrets.EMAIL_TO }}
           from:           Aegis CD <${{ secrets.SMTP_USERNAME }}>
-          subject:        "${{ steps.status.outputs.emoji }} [Aegis Deploy] ${{ steps.status.outputs.value }} — dev ${{ needs.resolve-env.outputs.tag }}"
+          subject:        "${{ steps.status.outputs.emoji }} [Aegis Deploy] ${{ steps.status.outputs.value }} — ${{ needs.resolve-env.outputs.env }} ${{ needs.resolve-env.outputs.tag }}"
           body: |
             Aegis Health — Deploy Pipeline
 
             Status      : ${{ steps.status.outputs.value }}
-            Environment : dev
+            Environment : ${{ needs.resolve-env.outputs.env }}
             Tag         : ${{ needs.resolve-env.outputs.tag }}
-            Namespace   : aegis-dev
+            Namespace   : aegis-${{ needs.resolve-env.outputs.env }}
             Actor       : ${{ github.actor }}
             Run         : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
