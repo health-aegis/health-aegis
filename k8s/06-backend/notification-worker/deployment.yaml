@@ -38,10 +38,22 @@ spec:
                 name: aegis-kv-secrets
             - configMapRef:
                 name: aegis-config
+          readinessProbe:
+            exec:
+              command: ["pgrep", "-f", "node"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["pgrep", "-f", "node"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
           resources:
             requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "200m"
+              cpu: "100m"
               memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"

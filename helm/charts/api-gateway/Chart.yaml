@@ -1,0 +1,6 @@
+apiVersion: v2
+name: api-gateway
+description: Aegis Health — API Gateway (entry point for all client traffic)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

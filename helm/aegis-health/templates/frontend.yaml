@@ -55,9 +55,10 @@ data:
         error_page 500 502 503 504 /50x.html;
         location = /50x.html { root /usr/share/nginx/html; }
     }
+{{- $imageTag := index .Values.imageTags .Values.frontend.name | default .Values.global.imageTag }}
 ---
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: {{ .Values.frontend.name }}
   namespace: {{ .Release.Namespace }}
@@ -69,8 +70,19 @@ spec:
   selector:
     matchLabels:
       app: {{ .Values.frontend.name }}
+  strategy:
+    canary:
+      steps:
+        - setWeight: 20
+        - pause:
+            duration: 30s
+        - setWeight: 50
+        - pause:
+            duration: 30s
   template:
     metadata:
+      annotations:
+        rollme: {{ $imageTag | quote }}
       labels:
         app: {{ .Values.frontend.name }}
     spec:
@@ -80,7 +92,7 @@ spec:
             name: client-nginx-config
       containers:
         - name: {{ .Values.frontend.name }}
-          image: {{ include "aegis.image" (dict "root" . "repo" .Values.frontend.image) }}
+          image: {{ .Values.global.acrLoginServer }}/{{ .Values.frontend.image }}:{{ $imageTag }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
             - containerPort: {{ .Values.frontend.port }}

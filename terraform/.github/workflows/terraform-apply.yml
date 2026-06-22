@@ -1,0 +1,77 @@
+# ---------------------------------------------------------------------------
+# Terraform Infrastructure Pipeline — Caller workflow
+#
+# Two triggers, two actions:
+#
+#   PUSH to main (terraform files change)
+#     → runs "plan" only — safe, no infra changes, posts plan to summary
+#     → review the plan output in the Actions summary tab
+#
+#   WORKFLOW DISPATCH (manual trigger)
+#     → you choose environment + action (plan or apply)
+#     → running "apply" via dispatch IS the approval decision
+#
+# Flow:
+#   push  →  plan only  →  review summary  →  manually dispatch apply when ready
+# ---------------------------------------------------------------------------
+
+name: Terraform Infrastructure Pipeline
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - '**.hcl'
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - test
+          - prod
+      action:
+        description: "Action to perform"
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+      tf_version:
+        description: "Terraform version (default: 1.7.5)"
+        required: false
+        type: string
+        default: "1.7.5"
+
+jobs:
+  # ── Push to main → plan only (safe, no infra changes) ─────────────────────
+  terraform-plan-test:
+    name: "Plan — Test Environment"
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/terraform-core.yml
+    with:
+      environment: test
+      action: plan
+      tf_version: "1.7.5"
+    secrets: inherit
+
+  # ── Manual dispatch → plan or apply on chosen environment ─────────────────
+  terraform-manual:
+    name: "${{ inputs.action }} — ${{ inputs.environment }}"
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/terraform-core.yml
+    with:
+      environment: ${{ inputs.environment }}
+      action: ${{ inputs.action }}
+      tf_version: ${{ inputs.tf_version || '1.7.5' }}
+    secrets: inherit

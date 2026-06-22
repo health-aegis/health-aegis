@@ -18,3 +18,8 @@ output "email_service_name" {
   description = "Name of the email communication service"
   value       = azurerm_email_communication_service.this.name
 }
+
+output "mail_from_sender_domain" {
+  description = "Azure-managed MailFrom domain (e.g. <guid>.azurecomm.net) — prefix with DoNotReply@ for the full sender address"
+  value       = azurerm_email_communication_service_domain.this.mail_from_sender_domain
+}

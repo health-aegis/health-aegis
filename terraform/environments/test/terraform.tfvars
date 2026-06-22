@@ -30,7 +30,7 @@ postgres_subnet_cidr = "10.1.11.0/24"
 bastion_subnet_cidr  = "10.1.20.0/26"
 
 # ── AKS — single node pools, small VMs ───────────────────────────────────────
-kubernetes_version              = "1.29"
+kubernetes_version              = "1.35"
 node_count                      = 1 # system pool: 1 node (auto-scales to 3)
 node_vm_size                    = "Standard_D2s_v3"
 user_node_count                 = 1 # user pool:   1 node (auto-scales to 3)
@@ -62,3 +62,7 @@ deployer_object_id = ""
 
 # curl ifconfig.me
 deployer_ip = "0.0.0.0"
+
+# ── Function App ──────────────────────────────────────────────────────────────
+# acs_sender_address is derived automatically from the ACS email domain — no manual step needed.
+app_base_url = "https://aegishealth.io"

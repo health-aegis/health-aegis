@@ -1,0 +1,36 @@
+replicaCount: 1
+
+image:
+  repository: postgres
+  pullPolicy: IfNotPresent
+  tag: "15-alpine"
+
+service:
+  type: ClusterIP
+  port: 5432
+
+storage:
+  storageClassName: managed-csi
+  size: 5Gi
+
+db:
+  name: imaging
+  user: aegis
+
+secrets:
+  providerClassName: aegis-kv-secret-provider
+  kvSecretName: aegis-kv-secrets
+
+serviceAccount:
+  name: aegis-workload-identity
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+networkPolicy:
+  enabled: true

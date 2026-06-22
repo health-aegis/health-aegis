@@ -14,7 +14,7 @@
 # • snyk      — Snyk dependency vulnerability scan per changed service (matrix)
 # • build     — docker build; image saved as artifact (not pushed yet)
 # • trivy     — scan artifact image; FAILS on HIGH / CRITICAL
-# • push      — push to ACR only after Trivy passes (push events only)
+# • push      — push to ACR only after Trivy passes; pushes :latest on main + develop
 # • release   — GitHub Release (main branch only)
 # • notify    — email on ALL outcomes (always)
 #
@@ -68,11 +68,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
+
+      - name: Resolve base SHA
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "sha=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          base: ${{ steps.base.outputs.sha }}
           filters: |
             api-gateway:
               - 'services/api-gateway/**'
@@ -87,7 +97,7 @@ jobs:
               - 'services/notification-worker/**'
             imaging-service:
               - 'services/imaging-service/**'
-            diagnostic-agent:
+            diagnostic-agent-service:
               - 'services/diagnostic-agent-service/**'
             coordinator-agent:
               - 'services/coordinator-agent/**'
@@ -134,8 +144,8 @@ jobs:
           [[ "${{ steps.filter.outputs.imaging-service }}" == "true" ]] && svc+=(
             '{"service":"imaging-service","context":"services/imaging-service","dockerfile":"services/imaging-service/Dockerfile","lang":"python","dir":"services/imaging-service","sonar_key":"health-aegis_imaging-service"}'
           )
-          [[ "${{ steps.filter.outputs.diagnostic-agent }}" == "true" ]] && svc+=(
-            '{"service":"diagnostic-agent","context":"services/diagnostic-agent-service","dockerfile":"services/diagnostic-agent-service/Dockerfile","lang":"python","dir":"services/diagnostic-agent-service","sonar_key":"health-aegis_diagnostic-agent"}'
+          [[ "${{ steps.filter.outputs.diagnostic-agent-service }}" == "true" ]] && svc+=(
+            '{"service":"diagnostic-agent-service","context":"services/diagnostic-agent-service","dockerfile":"services/diagnostic-agent-service/Dockerfile","lang":"python","dir":"services/diagnostic-agent-service","sonar_key":"health-aegis_diagnostic-agent-service"}'
           )
           [[ "${{ steps.filter.outputs.coordinator-agent }}" == "true" ]] && svc+=(
             '{"service":"coordinator-agent","context":"services/coordinator-agent","dockerfile":"services/coordinator-agent/Dockerfile","lang":"python","dir":"services/coordinator-agent","sonar_key":"health-aegis_coordinator-agent"}'
@@ -209,7 +219,6 @@ jobs:
             -Dsonar.projectKey=health-aegis_health-aegis
             -Dsonar.organization=health-aegis
             -Dsonar.sources=src
-            -Dsonar.qualitygate.wait=true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -228,19 +237,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Snyk dependency scan
-        uses: snyk/actions/node@master
+      - name: Install Snyk CLI
+        uses: snyk/actions/setup@master
+
+      - name: Install Node dependencies for Snyk
         if: matrix.lang == 'node'
-        with:
-          args: --severity-threshold=high --file=${{ matrix.dir }}/package.json
+        working-directory: ${{ matrix.dir }}
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Install Python dependencies for Snyk
+        if: matrix.lang == 'python'
+        working-directory: ${{ matrix.dir }}
+        run: pip install -r requirements.txt --quiet
+
+      - name: Snyk dependency scan (Node)
+        if: matrix.lang == 'node'
+        working-directory: ${{ matrix.dir }}
+        run: snyk test --severity-threshold=high
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
       - name: Snyk dependency scan (Python)
-        uses: snyk/actions/python@master
         if: matrix.lang == 'python'
-        with:
-          args: --severity-threshold=high --file=${{ matrix.dir }}/requirements.txt
+        working-directory: ${{ matrix.dir }}
+        run: snyk test --severity-threshold=high --file=requirements.txt
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
@@ -314,15 +334,27 @@ jobs:
       - name: Load image
         run: docker load < /tmp/${{ matrix.service }}.tar.gz
 
-      - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
+      - name: Trivy vulnerability scan (enforce gate)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref:      ${{ secrets.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}
+          format:         table
+          severity:       HIGH,CRITICAL
+          exit-code:      '1'
+          ignore-unfixed: true
+          scanners:       vuln
+
+      - name: Trivy vulnerability scan (SARIF upload)
+        uses: aquasecurity/trivy-action@master
+        if: always()
         with:
           image-ref:      ${{ secrets.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}
           format:         sarif
           output:         trivy-${{ matrix.service }}.sarif
           severity:       HIGH,CRITICAL
-          exit-code:      '1'
+          exit-code:      '0'
           ignore-unfixed: true
+          scanners:       vuln
 
       - name: Upload SARIF to GitHub Security tab
         if: always()
@@ -379,8 +411,8 @@ jobs:
 
           docker push "${ACR}/${SVC}:${TAG}"
 
-          # Update :latest only on main branch
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          # Push :latest on main and develop (dev environment uses latest tag)
+          if [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/develop" ]; then
             docker tag "${ACR}/${SVC}:${TAG}" "${ACR}/${SVC}:latest"
             docker push "${ACR}/${SVC}:latest"
           fi

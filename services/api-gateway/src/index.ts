@@ -80,6 +80,3 @@ mongoose
     process.exit(1);
   });
 
-// Trigger nodemon restart
-
-// Trigger nodemon restart after env change

@@ -1,0 +1,254 @@
+# ---------------------------------------------------------------------------
+# Terraform Core — Reusable workflow
+#
+# Accepts an "action" input:
+#   plan  → validate + plan + post summary (safe, no infra changes)
+#   apply → validate + plan + apply        (triggered manually via workflow_dispatch)
+#
+# This replaces the GitHub Environment approval gate (paid feature).
+# The caller controls when apply runs — workflow_dispatch IS the approval.
+# ---------------------------------------------------------------------------
+
+name: "Terraform Core (Reusable)"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment — must match environments/<name>/ directory"
+        required: true
+        type: string
+      action:
+        description: "plan (validate only) or apply (plan + apply)"
+        required: true
+        type: string
+      tf_version:
+        description: "Terraform CLI version"
+        required: false
+        type: string
+        default: "1.7.5"
+
+# ────────────────────────────────────────────────────────────────────────────
+# Job 1 — Validate + Plan  (runs on every call)
+# ────────────────────────────────────────────────────────────────────────────
+jobs:
+  plan:
+    name: "Validate & Plan (${{ inputs.environment }})"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+    env:
+      ARM_USE_OIDC:        "true"
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_postgres_admin_password: ${{ secrets.TF_VAR_POSTGRES_ADMIN_PASSWORD }}
+      TF_VAR_jwt_secret:              ${{ secrets.TF_VAR_JWT_SECRET }}
+      TF_VAR_azure_ai_key:            ${{ secrets.TF_VAR_AZURE_AI_KEY }}
+      TF_VAR_azure_ai_endpoint:       ${{ secrets.TF_VAR_AZURE_AI_ENDPOINT }}
+      TF_VAR_gemini_api_key:          ${{ secrets.TF_VAR_GEMINI_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform ${{ inputs.tf_version }}
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.tf_version }}
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config=environments/${{ inputs.environment }}/backend.hcl \
+            -reconfigure \
+            -input=false
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var-file=environments/${{ inputs.environment }}/terraform.tfvars \
+            -out=tfplan.binary \
+            -no-color \
+            -input=false \
+            2>&1 | tee plan.txt
+
+      - name: Post plan to job summary
+        if: always()
+        run: |
+          {
+            echo "## Terraform Plan — \`${{ inputs.environment }}\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Action** | \`${{ inputs.action }}\` |"
+            echo "| **Environment** | \`${{ inputs.environment }}\` |"
+            echo "| **Triggered by** | \`${{ github.actor }}\` |"
+            echo "| **Commit** | \`${{ github.sha }}\` |"
+            echo ""
+            echo "<details><summary>Show full plan output</summary>"
+            echo ""
+            echo '```'
+            cat plan.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          path: tfplan.binary
+          retention-days: 1
+
+# ────────────────────────────────────────────────────────────────────────────
+# Job 2 — Apply  (only when action == 'apply')
+#
+# Triggered manually via workflow_dispatch in terraform-apply.yml.
+# You choosing to run the dispatch IS the approval decision.
+# ────────────────────────────────────────────────────────────────────────────
+  apply:
+    name: "Apply (${{ inputs.environment }})"
+    needs: plan
+    if: inputs.action == 'apply'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      workload_identity_client_id: ${{ steps.tf-outputs.outputs.client_id }}
+      tenant_id:                    ${{ steps.tf-outputs.outputs.tenant_id }}
+      key_vault_name:               ${{ steps.tf-outputs.outputs.kv_name }}
+
+    env:
+      ARM_USE_OIDC:        "true"
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_postgres_admin_password: ${{ secrets.TF_VAR_POSTGRES_ADMIN_PASSWORD }}
+      TF_VAR_jwt_secret:              ${{ secrets.TF_VAR_JWT_SECRET }}
+      TF_VAR_azure_ai_key:            ${{ secrets.TF_VAR_AZURE_AI_KEY }}
+      TF_VAR_azure_ai_endpoint:       ${{ secrets.TF_VAR_AZURE_AI_ENDPOINT }}
+      TF_VAR_gemini_api_key:          ${{ secrets.TF_VAR_GEMINI_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform ${{ inputs.tf_version }}
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.tf_version }}
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config=environments/${{ inputs.environment }}/backend.hcl \
+            -reconfigure \
+            -input=false
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          path: .
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false tfplan.binary
+
+      - name: Capture Terraform outputs
+        id: tf-outputs
+        run: |
+          echo "client_id=$(terraform output -raw workload_identity_client_id)" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$(terraform output -raw tenant_id)"                   >> "$GITHUB_OUTPUT"
+          echo "kv_name=$(terraform output -raw key_vault_name)"                >> "$GITHUB_OUTPUT"
+
+      - name: Write apply summary
+        if: always()
+        run: |
+          {
+            echo "## Terraform Apply — \`${{ inputs.environment }}\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Status** | \`${{ job.status }}\` |"
+            echo "| **Environment** | \`${{ inputs.environment }}\` |"
+            echo "| **Applied by** | \`${{ github.actor }}\` |"
+            echo "| **Run ID** | \`${{ github.run_id }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+# ────────────────────────────────────────────────────────────────────────────
+# Job 3 — Sync GitOps  (only after a successful apply)
+#
+# Patches helm/environments/<env>/values.yaml in k8s-manifests with the
+# real Terraform outputs so ArgoCD always deploys with the correct client ID,
+# tenant ID, and Key Vault name — even after a destroy + re-apply.
+#
+# Requires secret GITOPS_PAT — a GitHub PAT with repo write scope on
+# health-aegis/k8s-manifests (Settings → Secrets → GITOPS_PAT).
+# ────────────────────────────────────────────────────────────────────────────
+  sync-gitops:
+    name: "Sync GitOps values (${{ inputs.environment }})"
+    needs: apply
+    if: inputs.action == 'apply'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout k8s-manifests
+        uses: actions/checkout@v4
+        with:
+          repository: health-aegis/k8s-manifests
+          token: ${{ secrets.GITOPS_PAT }}
+          path: k8s-manifests
+
+      - name: Patch Helm environment values
+        env:
+          CLIENT_ID: ${{ needs.apply.outputs.workload_identity_client_id }}
+          TENANT_ID: ${{ needs.apply.outputs.tenant_id }}
+          KV_NAME:   ${{ needs.apply.outputs.key_vault_name }}
+          # Terraform uses 'test' for dev environment; map it to Helm's 'dev'
+          HELM_ENV:  ${{ inputs.environment == 'test' && 'dev' || inputs.environment }}
+        run: |
+          VALUES="k8s-manifests/helm/environments/${HELM_ENV}/values.yaml"
+          sed -i "s|clientId: \".*\"|clientId: \"${CLIENT_ID}\"|"  "$VALUES"
+          sed -i "s|tenantId: \".*\"|tenantId: \"${TENANT_ID}\"|"  "$VALUES"
+          sed -i "s|name: aegis-kv-[a-z-]*|name: ${KV_NAME}|"     "$VALUES"
+
+      - name: Commit and push to k8s-manifests
+        working-directory: k8s-manifests
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          git add helm/environments/
+          git diff --cached --quiet \
+            && echo "No value changes — skipping commit" \
+            && exit 0
+          git commit -m "chore(gitops): sync Helm values from Terraform ${{ inputs.environment }} apply [skip ci]"
+          git push

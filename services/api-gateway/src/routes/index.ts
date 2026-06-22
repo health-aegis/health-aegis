@@ -11,11 +11,55 @@ import * as activityController from '../controllers/activityController';
 import * as cosmosController from '../controllers/cosmosController';
 import { authMiddleware } from '../middleware/authMiddleware';
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import {
+    BlobSASPermissions,
+    StorageSharedKeyCredential,
+    generateBlobSASQueryParameters,
+} from '@azure/storage-blob';
 
 const router = Router();
 
 const IMAGING_URL = process.env.IMAGING_SERVICE_URL || 'http://imaging-service:5004';
 const DIAGNOSTICS_URL = process.env.DIAGNOSTICS_SERVICE_URL || 'http://diagnostic-agent-service:5005';
+
+// Generate a 1-hour read SAS URL for a private Azure Blob, or return the original URL
+// if the connection string is unavailable.
+function buildSasUrl(blobUrl: string): string {
+    const connStr = process.env.AZURE_STORAGE_CONNECTION_STRING || '';
+    if (!connStr || !blobUrl.includes('blob.core.windows.net')) return blobUrl;
+
+    const parts: Record<string, string> = {};
+    connStr.split(';').forEach(seg => {
+        const idx = seg.indexOf('=');
+        if (idx > 0) parts[seg.slice(0, idx)] = seg.slice(idx + 1);
+    });
+
+    const accountName = parts['AccountName'];
+    const accountKey  = parts['AccountKey'];
+    if (!accountName || !accountKey) return blobUrl;
+
+    try {
+        const url = new URL(blobUrl);
+        const pathParts = url.pathname.replace(/^\//, '').split('/');
+        if (pathParts.length < 2) return blobUrl;
+        const containerName = pathParts[0];
+        const blobName = decodeURIComponent(pathParts.slice(1).join('/'));
+
+        const credential = new StorageSharedKeyCredential(accountName, accountKey);
+        const sasToken = generateBlobSASQueryParameters(
+            {
+                containerName,
+                blobName,
+                permissions: BlobSASPermissions.parse('r'),
+                expiresOn: new Date(Date.now() + 60 * 60 * 1000),
+            },
+            credential
+        ).toString();
+        return `${url.origin}${url.pathname}?${sasToken}`;
+    } catch {
+        return blobUrl;
+    }
+}
 
 import * as http from 'http';
 import * as https from 'https';
@@ -77,10 +121,16 @@ router.patch('/imaging/:imageId/status', authMiddleware, async (req: any, res: a
 // ─── Diagnostic Agent Analyze — direct fetch (body-parser already consumed JSON body) ──
 router.post('/diagnostics/analyze', authMiddleware, async (req: any, res: any) => {
     try {
+        const body = { ...req.body };
+        // Blob is private — upgrade the URL to a 1-hour read SAS so the
+        // diagnostic-agent-service can download the image without needing
+        // its own storage credentials.
+        if (body.image_url) body.image_url = buildSasUrl(body.image_url);
+
         const r = await fetch(`${DIAGNOSTICS_URL}/analyze`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(req.body),
+            body: JSON.stringify(body),
         });
         const data = await r.json();
         res.status(r.status).json(data);

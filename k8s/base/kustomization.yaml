@@ -7,6 +7,7 @@ resources:
   - ../03-storage
   - ../04-network-policies
   - ../05-data/mongodb
+  - ../06-backend/api-gateway
   - ../06-backend/health-records-service
   - ../06-backend/medication-service
   - ../06-backend/ai-service

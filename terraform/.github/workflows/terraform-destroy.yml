@@ -1,0 +1,130 @@
+# ---------------------------------------------------------------------------
+# Terraform Destroy Pipeline
+#
+# MANUAL ONLY — never triggered by push. Destroys ALL infrastructure in the
+# selected environment.
+#
+# Safety gates:
+#   1. Confirmation input — user must type the environment name exactly
+#   2. Environment protection gate — requires reviewer approval in GitHub UI
+#      (Settings → Environments → terraform-destroy-test / terraform-destroy-prod)
+#
+# Prerequisites:
+#   Create two GitHub Environments (separate from the apply environments):
+#     • terraform-destroy-test  (add required reviewers)
+#     • terraform-destroy-prod  (add required reviewers + restrict to main branch)
+# ---------------------------------------------------------------------------
+
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment to destroy (test or prod)"
+        required: true
+        type: choice
+        options:
+          - test
+          - prod
+      confirm:
+        description: "Type the environment name to confirm (e.g. 'test' or 'prod')"
+        required: true
+        type: string
+      tf_version:
+        description: "Terraform version (leave blank for default 1.7.5)"
+        required: false
+        type: string
+        default: "1.7.5"
+
+jobs:
+  # ── Guard: abort immediately if confirmation string doesn't match ───────────
+  validate-confirmation:
+    name: "Validate Confirmation"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check confirmation matches environment
+        run: |
+          if [ "${{ inputs.confirm }}" != "${{ inputs.environment }}" ]; then
+            echo "ERROR: Confirmation '${{ inputs.confirm }}' does not match environment '${{ inputs.environment }}'."
+            echo "Re-run the workflow and type the environment name exactly in the confirm field."
+            exit 1
+          fi
+          echo "Confirmation matched. Proceeding to approval gate."
+
+  # ── Approval gate — GitHub pauses here until a reviewer approves ────────────
+  approve:
+    name: "Waiting for Destroy Approval (${{ inputs.environment }})"
+    needs: validate-confirmation
+    runs-on: ubuntu-latest
+    environment: terraform-destroy-${{ inputs.environment }}
+    steps:
+      - name: Approval received
+        run: |
+          echo "Destroy approved by: ${{ github.actor }}"
+          echo "Environment: ${{ inputs.environment }}"
+          echo "WARNING: All infrastructure in '${{ inputs.environment }}' will be destroyed."
+
+  # ── Destroy ─────────────────────────────────────────────────────────────────
+  destroy:
+    name: "Destroy (${{ inputs.environment }})"
+    needs: approve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      ARM_USE_OIDC:        "true"
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_postgres_admin_password: ${{ secrets.TF_VAR_POSTGRES_ADMIN_PASSWORD }}
+      TF_VAR_jwt_secret:              ${{ secrets.TF_VAR_JWT_SECRET }}
+      TF_VAR_azure_ai_key:            ${{ secrets.TF_VAR_AZURE_AI_KEY }}
+      TF_VAR_azure_ai_endpoint:       ${{ secrets.TF_VAR_AZURE_AI_ENDPOINT }}
+      TF_VAR_gemini_api_key:          ${{ secrets.TF_VAR_GEMINI_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform ${{ inputs.tf_version }}
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.tf_version || '1.7.5' }}
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config=environments/${{ inputs.environment }}/backend.hcl \
+            -reconfigure \
+            -input=false
+
+      - name: Terraform Destroy
+        run: |
+          terraform destroy \
+            -var-file=environments/${{ inputs.environment }}/terraform.tfvars \
+            -auto-approve \
+            -input=false
+
+      - name: Write destroy summary
+        if: always()
+        run: |
+          {
+            echo "## Terraform Destroy — \`${{ inputs.environment }}\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Status** | ${{ job.status }} |"
+            echo "| **Environment** | \`${{ inputs.environment }}\` |"
+            echo "| **Destroyed by** | \`${{ github.actor }}\` |"
+            echo "| **Run ID** | \`${{ github.run_id }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -112,13 +112,13 @@ variable "user_node_vm_size" {
 variable "kubernetes_namespace" {
   description = "Kubernetes namespace for Aegis application workloads"
   type        = string
-  default     = "aegis"
+  default     = "aegis-dev"
 }
 
 variable "kubernetes_service_account_name" {
   description = "Name of the Kubernetes ServiceAccount to federate with workload identity"
   type        = string
-  default     = "aegis-workload-sa"
+  default     = "aegis-workload-identity"
 }
 
 # ---------------------------------------------------------------------------
@@ -250,4 +250,13 @@ variable "azure_ai_key" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+# ---------------------------------------------------------------------------
+# Function App
+# ---------------------------------------------------------------------------
+variable "app_base_url" {
+  description = "Base URL of the Aegis web application (used in notification email links)"
+  type        = string
+  default     = "https://aegishealth.io"
 }

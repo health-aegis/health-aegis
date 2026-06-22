@@ -38,15 +38,13 @@ resource "azurerm_key_vault" "this" {
   soft_delete_retention_days = 7
   purge_protection_enabled   = false
 
-  # See NETWORK ACCESS DESIGN comment at top of file.
   public_network_access_enabled = true
 
+  # Allow all networks — secrets are protected by access policies, not network rules.
+  # GHA runners have dynamic IPs so IP allowlisting is not practical.
   network_acls {
     bypass         = "AzureServices"
-    default_action = "Deny"
-    # Allow Terraform runner IP for initial secret bootstrapping.
-    # Set to your public IP: curl ifconfig.me
-    ip_rules = var.deployer_ip != "" && var.deployer_ip != "0.0.0.0" ? [var.deployer_ip] : []
+    default_action = "Allow"
   }
 
   tags = var.tags
