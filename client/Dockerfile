@@ -19,14 +19,12 @@ COPY client/src/ ./src/
 RUN npm run build
 
 # ── Nginx static server stage ─────────────────────────────────
-FROM nginx:alpine
-
-RUN apk update && apk upgrade --no-cache && rm -rf /var/cache/apk/*
+FROM nginxinc/nginx-unprivileged:alpine
 
 COPY client/nginx.conf /etc/nginx/conf.d/default.conf
 
 COPY --from=builder /usr/src/app/client/dist /usr/share/nginx/html
 
-EXPOSE 80
+EXPOSE 8080
 
 CMD ["nginx", "-g", "daemon off;"]
