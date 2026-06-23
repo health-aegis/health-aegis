@@ -19,12 +19,16 @@ COPY client/src/ ./src/
 RUN npm run build
 
 # ── Nginx static server stage ─────────────────────────────────
-FROM nginxinc/nginx-unprivileged:alpine
+FROM nginx:alpine
 
 COPY client/nginx.conf /etc/nginx/conf.d/default.conf
-
 COPY --from=builder /usr/src/app/client/dist /usr/share/nginx/html
 
-EXPOSE 8080
+# Fix permissions so the built-in nginx user (uid 101) can write temp files
+RUN chown -R nginx:nginx /var/cache/nginx /usr/share/nginx/html \
+    && touch /var/run/nginx.pid \
+    && chown nginx:nginx /var/run/nginx.pid
 
+USER nginx
+EXPOSE 8080
 CMD ["nginx", "-g", "daemon off;"]
