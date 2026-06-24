@@ -33,53 +33,14 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
 
     outputs:
-      tag:                     ${{ steps.out.outputs.tag }}
-      env:                     ${{ steps.out.outputs.env }}
-      changed_api_gateway:     ${{ steps.filter.outputs.api-gateway }}
-      changed_health_records:  ${{ steps.filter.outputs.health-records-service }}
-      changed_medication:      ${{ steps.filter.outputs.medication-service }}
-      changed_ai:              ${{ steps.filter.outputs.ai-service }}
-      changed_notification:    ${{ steps.filter.outputs.notification-worker }}
-      changed_imaging:         ${{ steps.filter.outputs.imaging-service }}
-      changed_diagnostic:      ${{ steps.filter.outputs.diagnostic-agent-service }}
-      changed_coordinator:     ${{ steps.filter.outputs.coordinator-agent }}
-      changed_image_analysis:  ${{ steps.filter.outputs.image-analysis-agent }}
-      changed_patient_history: ${{ steps.filter.outputs.patient-history-agent }}
-      changed_client:          ${{ steps.filter.outputs.client }}
+      tag: ${{ steps.out.outputs.tag }}
+      env: ${{ steps.out.outputs.env }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           ref:         ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
-
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            api-gateway:
-              - 'services/api-gateway/**'
-              - 'shared/**'
-            health-records-service:
-              - 'services/health-records-service/**'
-            medication-service:
-              - 'services/medication-service/**'
-            ai-service:
-              - 'services/ai-service/**'
-            notification-worker:
-              - 'services/notification-worker/**'
-            imaging-service:
-              - 'services/imaging-service/**'
-            diagnostic-agent-service:
-              - 'services/diagnostic-agent-service/**'
-            coordinator-agent:
-              - 'services/coordinator-agent/**'
-            image-analysis-agent:
-              - 'services/image-analysis-agent/**'
-            patient-history-agent:
-              - 'services/patient-history-agent/**'
-            client:
-              - 'client/**'
 
       - name: Resolve environment and tag
         id: out
@@ -90,16 +51,17 @@ jobs:
           if [[ "${BRANCH}" == "main" || "${{ inputs.environment }}" == "prod" ]]; then
             ENV="prod"
             git fetch --tags --quiet
-            TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+            TAG=$(git describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null || true)
             if [ -z "$TAG" ]; then
               TAG="${{ inputs.image_tag }}"
             fi
             if [ -z "$TAG" ]; then
-              echo "⚠ No semver tag found on this commit"; exit 1
+              echo "⚠ No semver tag found — falling back to SHA"
+              TAG="sha-${SHA:0:7}"
             fi
           else
             ENV="dev"
-            TAG="${{ inputs.image_tag || '' }}"
+            TAG="${{ inputs.image_tag }}"
             if [ -z "$TAG" ]; then
               TAG="sha-${SHA:0:7}"
             fi
@@ -116,14 +78,13 @@ jobs:
     if: needs.resolve-env.outputs.env == 'prod'
     environment: production
     steps:
-      - run: echo "✅ Production deployment approved — proceeding."
+      - run: echo "✅ Production deployment approved."
 
   deploy-api-gateway:
     needs: [resolve-env, await-approval]
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_api_gateway == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -139,7 +100,6 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_health_records == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -155,7 +115,6 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_medication == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -171,7 +130,6 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_ai == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -187,7 +145,6 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_notification == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -203,7 +160,6 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_imaging == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -219,7 +175,6 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_diagnostic == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -235,7 +190,6 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_coordinator == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -251,7 +205,6 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_image_analysis == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -267,7 +220,6 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_patient_history == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -283,7 +235,6 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      needs.resolve-env.outputs.changed_client == 'true' &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -340,6 +291,5 @@ jobs:
             Status      : ${{ steps.status.outputs.value }}
             Environment : ${{ needs.resolve-env.outputs.env }}
             Tag         : ${{ needs.resolve-env.outputs.tag }}
-            Namespace   : aegis-${{ needs.resolve-env.outputs.env }}
             Actor       : ${{ github.actor }}
             Run         : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
