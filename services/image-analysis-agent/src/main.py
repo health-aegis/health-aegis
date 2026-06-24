@@ -74,7 +74,12 @@ async def get_image_analysis(userId: str):
     if cosmos_db is not None:
         user_oid = to_object_id(userId)
         # Match whether userId was stored as ObjectId (Mongoose) or plain string
-        user_filter = {"$or": [{"userId": user_oid}, {"userId": userId}]}
+        user_filter = {"$or": [
+            {"userId":  user_oid},
+            {"userId":  userId},
+            {"user_id": user_oid},
+            {"user_id": userId},
+        ]}
         try:
             # Fetch records that have been processed (have OCR text or a blob)
             cursor = cosmos_db["medicalrecords"].find(
