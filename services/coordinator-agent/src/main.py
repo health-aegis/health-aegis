@@ -102,17 +102,19 @@ def build_prompt(query: str, image_data: dict, history_data: dict) -> str:
         'You are "Aegis Multi-Agent", an enterprise healthcare AI assistant.\n'
         "You have received outputs from two specialist AI agents that analyzed this patient's real data:\n"
         "1. Image Analysis Agent — reviewed the patient's uploaded documents, OCR-extracted text, and scan findings.\n"
-        "2. Patient History Agent — retrieved the patient's complete medical records, medications, and appointments.\n\n"
+        "2. Patient History Agent — retrieved the patient's complete medical records, medications, appointments, and imaging scans.\n\n"
         "Your role is to synthesize these findings into a single, clear, patient-friendly response.\n\n"
         "RULES:\n"
         "1. Start with a brief 1-sentence summary of what the agents found.\n"
-        "2. Highlight any significant findings from image analysis or lab reports.\n"
+        "2. Highlight any significant findings from image analysis, diagnostic reports, or lab reports.\n"
         "3. Cross-reference findings against the patient's current medications and history.\n"
         "4. Provide 2-3 actionable, specific recommendations based on the data.\n"
         "5. Use plain, warm, empathetic language. Use bullet points for clarity.\n"
         '6. Always end with: "⚕️ This is an AI-generated summary based on your records. '
         'Always consult your physician for clinical decisions."\n'
-        "7. CRITICAL: Never fabricate findings. If an agent returned no data, say so honestly.\n"
+        "7. CRITICAL: Imaging scans and their diagnostic reports ARE a valid and important part of the patient's medical history. "
+        "NEVER say 'no prior medical history' or 'no medical records' when imaging scans or diagnostic reports are present — "
+        "they ARE the medical record. Only say there is no medical history if BOTH the health documents AND imaging sections are empty.\n"
         "8. Keep the response under 400 words."
     )
 
@@ -131,16 +133,40 @@ def build_prompt(query: str, image_data: dict, history_data: dict) -> str:
     hist_parts = []
 
     records = history_data.get("medical_records", [])
+    img_records = history_data.get("image_records", [])
+
     if records:
-        hist_parts.append(f"Medical Records ({len(records)} entries):")
+        hist_parts.append(f"Health Document Records ({len(records)} entries):")
         for r in records[:5]:
             hist_parts.append(
                 f"  - [{r.get('date', 'Unknown')}] ({r.get('category', '')}) "
                 f"{r.get('title', 'Record')}: {r.get('description', '')}"
                 + (f" | Notes: {r['notes']}" if r.get("notes") else "")
             )
+    elif img_records:
+        hist_parts.append(
+            "Health Document Records: No uploaded health documents (PDFs, lab reports) on file. "
+            f"The patient does have {len(img_records)} imaging scan(s) on file — see Imaging Scans below."
+        )
     else:
-        hist_parts.append("Medical Records: None on file.")
+        hist_parts.append("Health Document Records: None on file.")
+
+    if img_records:
+        hist_parts.append(f"\nImaging Scans ({len(img_records)} — these ARE the patient's medical history):")
+        for img in img_records:
+            report_text = img.get("diagnostic_report") or ""
+            report_snippet = (
+                report_text[:800] + ("..." if len(report_text) > 800 else "")
+                if report_text else "No diagnostic report available yet."
+            )
+            hist_parts.append(
+                f"  - {img.get('filename', 'Unknown')} "
+                f"| Uploaded: {img.get('uploaded_at', 'Unknown')} "
+                f"| Status: {img.get('status', 'Unknown')}\n"
+                f"    Diagnostic Report: {report_snippet}"
+            )
+    else:
+        hist_parts.append("\nImaging Scans: None uploaded.")
 
     meds = history_data.get("medications", [])
     if meds:
@@ -166,24 +192,6 @@ def build_prompt(query: str, image_data: dict, history_data: dict) -> str:
             )
     else:
         hist_parts.append("\nAppointments: None scheduled.")
-
-    img_records = history_data.get("image_records", [])
-    if img_records:
-        hist_parts.append(f"\nUploaded Imaging Scans ({len(img_records)}) from PostgreSQL:")
-        for img in img_records:
-            report_text = img.get("diagnostic_report") or ""
-            report_snippet = (
-                report_text[:800] + ("..." if len(report_text) > 800 else "")
-                if report_text else "No diagnostic report available yet."
-            )
-            hist_parts.append(
-                f"  - {img.get('filename', 'Unknown')} "
-                f"| Uploaded: {img.get('uploaded_at', 'Unknown')} "
-                f"| Status: {img.get('status', 'Unknown')}\n"
-                f"    Diagnostic Report: {report_snippet}"
-            )
-    else:
-        hist_parts.append("\nImaging Scans: None uploaded.")
 
     history_section = "\n".join(hist_parts)
 
