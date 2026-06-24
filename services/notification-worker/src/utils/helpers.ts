@@ -1,14 +1,11 @@
-/**
- * Format a date as YYYY-MM-DD
- */
-export const formatDate = (date: Date): string =>
-  date.toISOString().split('T')[0];
+const TZ = process.env.APP_TIMEZONE || 'Asia/Kolkata';
 
-/**
- * Format a time as HH:MM (24h)
- */
-export const formatTime = (date: Date): string => {
-  const h = String(date.getHours()).padStart(2, '0');
-  const m = String(date.getMinutes()).padStart(2, '0');
-  return `${h}:${m}`;
-};
+// Use Intl so the worker respects the same timezone the user sees in the UI,
+// regardless of what UTC offset the Kubernetes node runs on.
+export const formatDate = (date: Date): string =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(date);
+
+export const formatTime = (date: Date): string =>
+  new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false })
+    .format(date);
