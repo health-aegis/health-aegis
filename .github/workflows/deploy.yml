@@ -67,6 +67,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         with:
           base: ${{ steps.base.outputs.sha }}
+          ref:  ${{ github.event.workflow_run.head_sha || github.sha }}
           filters: |
             api-gateway:
               - 'services/api-gateway/**'
@@ -103,17 +104,15 @@ jobs:
           git fetch --tags --quiet
 
           SEMVER=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-          IS_ON_MAIN=$(git branch -r --contains HEAD 2>/dev/null | grep -cE "^\s*origin/main$" || true)
 
           echo "DEBUG: event=${{ github.event_name }}"
           echo "DEBUG: head_branch=${BRANCH}"
           echo "DEBUG: head_sha=${SHA}"
           echo "DEBUG: HEAD=$(git rev-parse HEAD)"
           echo "DEBUG: SEMVER=${SEMVER}"
-          echo "DEBUG: IS_ON_MAIN=${IS_ON_MAIN}"
           echo "DEBUG: all tags on HEAD=$(git tag --points-at HEAD | tr '\n' ' ')"
 
-          if [[ -n "${SEMVER}" || "${IS_ON_MAIN}" -ge 1 || "${BRANCH}" == "main" || "${{ inputs.environment }}" == "prod" ]]; then
+          if [[ -n "${SEMVER}" || "${BRANCH}" == "main" || "${{ inputs.environment }}" == "prod" ]]; then
             ENV="prod"
             TAG="${SEMVER}"
             if [ -z "$TAG" ]; then
