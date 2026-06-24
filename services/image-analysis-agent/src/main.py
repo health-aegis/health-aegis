@@ -24,7 +24,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── Cosmos DB (MongoDB API) ──────────────────────────────────────────────────
 # Key Vault CSI injects MONGODB_URI (same secret used by api-gateway and azure-function)
 MONGODB_URI = os.getenv("MONGODB_URI", "")
 cosmos_client = None
@@ -47,7 +46,6 @@ async def startup():
         print("ℹ️  [image-analysis-agent] MONGODB_URI not set — findings will be empty")
 
 
-# ─── Helper ───────────────────────────────────────────────────────────────────
 def to_object_id(user_id: str):
     """Cast userId string to ObjectId for Cosmos DB queries (matches api-gateway pattern)."""
     try:
@@ -55,8 +53,6 @@ def to_object_id(user_id: str):
     except Exception:
         return user_id
 
-
-# ─── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/analyze")
 async def get_image_analysis(userId: str):

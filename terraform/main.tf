@@ -1,26 +1,3 @@
-# ---------------------------------------------------------------------------
-# Aegis Health — Root Terraform configuration
-#
-# Module dependency graph:
-#
-#   resource_group
-#       └── networking
-#               ├── app_gateway  (public-subnet — AGIC single entry point)
-#               │     └── aks   (depends on app_gateway for AGIC addon)
-#               │           └── acr (depends on aks for kubelet_identity_object_id)
-#               ├── bastion      (depends on networking)
-#               ├── postgres     (depends on networking)
-#               ├── cosmosdb
-#               ├── storage
-#               ├── doc_intelligence
-#               └── communication
-#   monitoring
-#   workload_identity            (depends on aks)
-#   key_vault                    (depends on all above — stores their secrets)
-#
-# All resources share a single resource group and common tags.
-# ---------------------------------------------------------------------------
-
 data "azurerm_client_config" "current" {}
 
 locals {
@@ -34,22 +11,16 @@ locals {
   }
 
   # Custom node resource group name — predictable for policy targeting.
-  # Default would be: MC_<resource_group>_<cluster_name>_<region>
   node_resource_group = "rg-${local.prefix}-nodes"
 
   # Derive storage account name from prefix (must be lowercase alphanumeric ≤24 chars)
   storage_account_name = lower(replace(var.storage_account_name_prefix, "-", ""))
 
-  # Communication service name falls back to prefix if not provided
   communication_service_name = var.communication_service_name != "" ? var.communication_service_name : "${local.prefix}-comm"
 
-  # Deployer object ID: use explicit variable, fall back to current client
   deployer_object_id = var.deployer_object_id != "" ? var.deployer_object_id : data.azurerm_client_config.current.object_id
 }
 
-# ---------------------------------------------------------------------------
-# 1. Resource Group
-# ---------------------------------------------------------------------------
 module "resource_group" {
   source   = "./modules/resource-group"
   name     = var.resource_group_name
@@ -57,9 +28,6 @@ module "resource_group" {
   tags     = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 2. Networking — VNet + subnets
-# ---------------------------------------------------------------------------
 module "networking" {
   source              = "./modules/networking"
   resource_group_name = module.resource_group.name
@@ -69,21 +37,16 @@ module "networking" {
   tags                = local.common_tags
 
   subnets = {
-    # public-subnet: hosts public-facing resources (App Gateway, external LB front-ends).
-    # Resources in this subnet can have public IPs assigned directly.
     "public-subnet" = {
       cidr = var.public_subnet_cidr
     }
-    # aks-subnet: private subnet — AKS node VMs and pod IPs (Azure CNI). No public IPs on nodes.
     "aks-subnet" = {
       cidr = var.aks_subnet_cidr
     }
-    # pe-subnet: private subnet — all PaaS private endpoints land here.
     "pe-subnet" = {
       cidr                = var.pe_subnet_cidr
       disable_pe_policies = true # Required for private endpoints
     }
-    # postgres-subnet: private subnet — delegated exclusively to PostgreSQL Flexible Server.
     "postgres-subnet" = {
       cidr = var.postgres_subnet_cidr
       delegation = {
@@ -99,9 +62,6 @@ module "networking" {
   }
 }
 
-# ---------------------------------------------------------------------------
-# 3. Monitoring — Log Analytics + Application Insights
-# ---------------------------------------------------------------------------
 module "monitoring" {
   source              = "./modules/monitoring"
   resource_group_name = module.resource_group.name
@@ -111,9 +71,6 @@ module "monitoring" {
   tags                = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 4. Application Gateway — public entry point + AGIC ingress controller
-# ---------------------------------------------------------------------------
 module "app_gateway" {
   source              = "./modules/app-gateway"
   name                = "${local.prefix}-appgw"
@@ -124,9 +81,6 @@ module "app_gateway" {
   tags                = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 5. AKS — Private Kubernetes cluster (renumbered; was 4)
-# ---------------------------------------------------------------------------
 module "aks" {
   source                     = "./modules/aks"
   cluster_name               = "${local.prefix}-aks"
@@ -147,9 +101,6 @@ module "aks" {
   depends_on = [module.app_gateway]
 }
 
-# ---------------------------------------------------------------------------
-# 5. Workload Identity — UAMI + OIDC federation for pod auth
-# ---------------------------------------------------------------------------
 module "workload_identity" {
   source                          = "./modules/workload-identity"
   identity_name                   = "${local.prefix}-workload-identity"
@@ -161,14 +112,7 @@ module "workload_identity" {
   tags                            = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 6. ACR — Private container registry (Premium, no public access)
-#
-# depends_on: We wait for the AKS cluster before assigning AcrPull because
-# the kubelet_identity_object_id doesn't exist until the cluster is created.
-# Terraform infers this from the module output reference, but explicit
-# depends_on makes the intent clear and prevents partial-apply race conditions.
-# ---------------------------------------------------------------------------
+# depends_on: kubelet_identity_object_id doesn't exist until the cluster is created.
 module "acr" {
   source                     = "./modules/acr"
   acr_name                   = var.acr_name
@@ -182,9 +126,6 @@ module "acr" {
   depends_on = [module.aks]
 }
 
-# ---------------------------------------------------------------------------
-# 7. Azure Bastion — secure VNet access for kubectl jump box
-# ---------------------------------------------------------------------------
 module "bastion" {
   source              = "./modules/bastion"
   name                = local.prefix
@@ -194,9 +135,6 @@ module "bastion" {
   tags                = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 8. PostgreSQL Flexible Server — relational DB for imaging metadata
-# ---------------------------------------------------------------------------
 module "postgres" {
   source              = "./modules/postgres"
   server_name         = "${local.prefix}-pgflex"
@@ -209,9 +147,6 @@ module "postgres" {
   tags                = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 9. CosmosDB — MongoDB-compatible document store
-# ---------------------------------------------------------------------------
 module "cosmosdb" {
   source              = "./modules/cosmosdb"
   account_name        = var.cosmosdb_account_name
@@ -223,9 +158,6 @@ module "cosmosdb" {
   tags                = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 10. Storage — Blob storage for medical images and health records
-# ---------------------------------------------------------------------------
 module "storage" {
   source              = "./modules/storage"
   account_name        = local.storage_account_name
@@ -237,9 +169,6 @@ module "storage" {
   tags                = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 11. Document Intelligence — OCR/form extraction for medical documents
-# ---------------------------------------------------------------------------
 module "doc_intelligence" {
   source              = "./modules/doc-intelligence"
   name                = var.doc_intelligence_name
@@ -250,9 +179,6 @@ module "doc_intelligence" {
   tags                = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 12. Communication Services — email notifications
-# ---------------------------------------------------------------------------
 module "communication" {
   source                     = "./modules/communication"
   communication_service_name = local.communication_service_name
@@ -260,9 +186,6 @@ module "communication" {
   tags                       = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 13. Service Bus — async messaging for notification pipeline
-# ---------------------------------------------------------------------------
 module "service_bus" {
   source              = "./modules/service-bus"
   namespace_name      = "${local.prefix}-bus"
@@ -271,18 +194,8 @@ module "service_bus" {
   tags                = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# 14. Key Vault — central secret store
-#
-# Created last because it stores connection strings and keys from all other
-# modules. All secrets are stored here and read by pods via the Secrets Store
-# CSI driver (configured via SecretProviderClass in Kubernetes manifests).
-#
-# depends_on: Explicit dependencies ensure secrets from other modules are
-# available before Key Vault tries to write them. Without this, Terraform
-# might try to write a secret whose value (e.g. cosmosdb connection string)
-# hasn't been computed yet.
-# ---------------------------------------------------------------------------
+# Key Vault is created last — it stores secrets from all other modules.
+# Explicit depends_on ensures secret values are available before Key Vault writes them.
 module "key_vault" {
   source                         = "./modules/key-vault"
   key_vault_name                 = var.key_vault_name
@@ -297,7 +210,6 @@ module "key_vault" {
   soft_delete_retention_days     = var.key_vault_retention_days
   tags                           = local.common_tags
 
-  # All secret values from other modules:
   secrets = {
     "kv-mongodb-uri"        = module.cosmosdb.mongodb_connection_string
     "kv-jwt-secret"         = var.jwt_secret
@@ -326,16 +238,6 @@ module "key_vault" {
   ]
 }
 
-# ---------------------------------------------------------------------------
-# 14. Function App — blob-triggered OCR and email notification
-#
-# Triggers when a file lands in health-records/{userId}/{filename}, runs OCR
-# via Document Intelligence, saves extracted text to CosmosDB, and emails
-# the patient via Azure Communication Services.
-#
-# depends_on key_vault: the access policy (for KV reference resolution) must
-# be applied before the function app is started; explicit dep ensures ordering.
-# ---------------------------------------------------------------------------
 module "function_app" {
   source = "./modules/function-app"
 
@@ -354,16 +256,8 @@ module "function_app" {
   depends_on = [module.key_vault]
 }
 
-# ---------------------------------------------------------------------------
-# Workload Identity RBAC — direct role assignment on a cloud service
-#
-# Grants the pod identity "Storage Blob Data Contributor" on the storage
-# account so pods can read/write blobs using DefaultAzureCredential (OIDC
-# token) instead of a connection-string key.
-#
-# This satisfies the Workload Identity evaluation criterion:
-#   "No access key credentials — identity must come from the pod's ServiceAccount"
-# ---------------------------------------------------------------------------
+# Grant the pod identity Storage Blob Data Contributor on the storage account
+# so pods can read/write blobs using DefaultAzureCredential (OIDC token).
 resource "azurerm_role_assignment" "workload_identity_storage" {
   scope                = module.storage.id
   role_definition_name = "Storage Blob Data Contributor"

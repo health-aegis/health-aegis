@@ -28,7 +28,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── Config ───────────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 IMAGE_AGENT_URL   = os.getenv("IMAGE_ANALYSIS_AGENT_URL",  "http://image-analysis-agent:8001")
@@ -51,13 +50,11 @@ else:
     print("ℹ️  [coordinator-agent] GEMINI_API_KEY not set — fallback will be used")
 
 
-# ─── Request/Response Models ──────────────────────────────────────────────────
 class AnalyzeRequest(BaseModel):
     user_id: str
     query: str
 
 
-# ─── Sub-Agent Callers ────────────────────────────────────────────────────────
 async def call_image_agent(user_id: str, client: httpx.AsyncClient) -> dict:
     try:
         r = await client.get(
@@ -100,7 +97,6 @@ async def call_history_agent(user_id: str, client: httpx.AsyncClient) -> dict:
         }
 
 
-# ─── Prompt Builder ───────────────────────────────────────────────────────────
 def build_prompt(query: str, image_data: dict, history_data: dict) -> str:
     system_instruction = (
         'You are "Aegis Multi-Agent", an enterprise healthcare AI assistant.\n'
@@ -120,7 +116,6 @@ def build_prompt(query: str, image_data: dict, history_data: dict) -> str:
         "8. Keep the response under 400 words."
     )
 
-    # ── Image Agent Section ───────────────────────────────────────────────────
     if image_data.get("has_data") and image_data.get("findings"):
         img_lines = [f"Total records with analysis: {image_data['image_count']}"]
         for i, f in enumerate(image_data["findings"], 1):
@@ -133,7 +128,6 @@ def build_prompt(query: str, image_data: dict, history_data: dict) -> str:
     else:
         image_section = "No processed image or document data found for this patient."
 
-    # ── History Agent Section ─────────────────────────────────────────────────
     hist_parts = []
 
     records = history_data.get("medical_records", [])
@@ -206,7 +200,6 @@ def build_prompt(query: str, image_data: dict, history_data: dict) -> str:
     )
 
 
-# ─── AI Caller ────────────────────────────────────────────────────────────────
 def call_ai(prompt: str) -> tuple[str, str]:
     """Returns (response_text, model_used)"""
     if not ai_ready:
@@ -237,7 +230,6 @@ def call_ai(prompt: str) -> tuple[str, str]:
     )
 
 
-# ─── Main Route ───────────────────────────────────────────────────────────────
 @app.post("/analyze")
 async def analyze(req: AnalyzeRequest):
     if not req.user_id or not req.query.strip():
@@ -248,7 +240,7 @@ async def analyze(req: AnalyzeRequest):
         f"user={req.user_id} query='{req.query[:60]}'"
     )
 
-    # Step 1 — Fan out to specialist agents in parallel
+    # Fan out to specialist agents in parallel
     async with httpx.AsyncClient() as client:
         image_data, history_data = await asyncio.gather(
             call_image_agent(req.user_id, client),
@@ -262,7 +254,6 @@ async def analyze(req: AnalyzeRequest):
         f"meds={history_data.get('medication_count', 0)}"
     )
 
-    # Step 2 — Build prompt and call Gemini AI
     prompt = build_prompt(req.query, image_data, history_data)
     response_text, model_used = call_ai(prompt)
 
@@ -320,18 +311,13 @@ def identity_check():
 
     # AZURE_CLIENT_ID is injected by the workload identity mutating webhook
     # when azure.workload.identity/use="true" is set on the pod.
-    # If this is absent, workload identity is not active.
     azure_client_id = os.getenv("AZURE_CLIENT_ID", "")
     wi_active = bool(azure_client_id)
 
-    # Check CSI secrets mount — Key Vault secrets are mounted here by the
-    # Secrets Store CSI driver using the workload identity token.
     secrets_mount = pathlib.Path("/mnt/secrets-store")
     kv_mounted    = secrets_mount.exists()
     kv_files      = sorted(p.name for p in secrets_mount.iterdir()) if kv_mounted else []
 
-    # AZURE_AI_KEY present means Azure AI uses an API key (from Key Vault via CSI).
-    # True workload-identity-only would use DefaultAzureCredential — noted as future improvement.
     ai_key_present = bool(os.getenv("AZURE_AI_KEY", ""))
 
     return {

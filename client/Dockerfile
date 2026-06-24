@@ -1,4 +1,3 @@
-# Build stage — React JSX SPA
 FROM node:20-alpine AS builder
 
 WORKDIR /usr/src/app/client
@@ -18,7 +17,6 @@ COPY client/src/ ./src/
 
 RUN npm run build
 
-# ── Nginx static server stage ─────────────────────────────────
 FROM nginx:alpine
 
 COPY client/nginx.conf /etc/nginx/conf.d/default.conf

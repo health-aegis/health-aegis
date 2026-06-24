@@ -30,7 +30,7 @@ environment         = "prod"
 workload_name       = "aegis"
 owner               = "aegis-prod-team"
 resource_group_name = "rg-aegis-prod"
-location            = "eastus2"
+location            = "westeurope"
 
 # ── Networking ────────────────────────────────────────────────────────────────
 # Separate CIDR range from test (10.1.x.x) to allow VNet peering if needed
@@ -55,7 +55,7 @@ acr_name                    = "aegisprodacr"
 key_vault_name              = "aegis-kv-prod"
 cosmosdb_account_name       = "aegis-csdb-prod"
 storage_account_name_prefix = "aegishealthprod"
-doc_intelligence_name       = "aegis-docai-prod"
+doc_intelligence_name       = "aegis-docai-prod-we"
 communication_service_name  = "aegis-prod-comm"
 
 # ── Storage containers ────────────────────────────────────────────────────────

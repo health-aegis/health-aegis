@@ -1,44 +1,9 @@
-# ---------------------------------------------------------------------------
-# CODE PACKAGING:
-#   archive_file creates a zip of infra/azure-function (node_modules excluded).
-#   null_resource deploys it via az CLI zip-deploy with --build-remote true so
-#   Azure runs npm install server-side (Oryx build). Re-deploys automatically
-#   when the function code hash changes.
-# ---------------------------------------------------------------------------
-
 data "archive_file" "function_package" {
   type        = "zip"
   source_dir  = "${path.module}/function-code"
   output_path = "${path.root}/azure-function-deploy.zip"
   excludes    = ["node_modules", "local.settings.json", ".funcignore"]
 }
-
-# ---------------------------------------------------------------------------
-# Function App module — blob-triggered OCR and email notification
-#
-# Trigger flow:
-#   Blob uploaded to health-records/{userId}/{filename}
-#     → Azure Function fires
-#     → OCR via Document Intelligence (Form Recognizer prebuilt-read)
-#     → Upsert extracted text into CosmosDB medicalrecords collection
-#     → Email notification to patient via Azure Communication Services
-#
-# SECRETS STRATEGY — Key Vault references:
-#   Sensitive app settings use @Microsoft.KeyVault(...) references instead of
-#   raw values. The function app's system-assigned managed identity is granted
-#   Get/List on Key Vault. Azure resolves the references at runtime so secrets
-#   never appear in the Portal, Terraform plan output, or deployment logs.
-#
-# CONSUMPTION PLAN (Y1):
-#   Pay-per-execution; no idle cost. Cold starts are acceptable for async
-#   document processing. Switch to EP1 (Elastic Premium) if sub-second
-#   latency is required.
-#
-# CODE DEPLOYMENT:
-#   This module provisions infrastructure only. Deploy the function code via:
-#     func azure functionapp publish <function-app-name> --javascript
-#   or via a GitHub Actions step using azure/functions-action.
-# ---------------------------------------------------------------------------
 
 # Internal storage — Functions runtime state, trigger coordination, deployment packages.
 # Separate from the health-records storage account; no health data is stored here.
@@ -141,7 +106,6 @@ resource "null_resource" "deploy_function_code" {
 }
 
 # Grant the function app's identity read access to Key Vault secrets.
-# This enables Key Vault reference resolution in app_settings above.
 resource "azurerm_key_vault_access_policy" "function_app" {
   key_vault_id = var.key_vault_id
   tenant_id    = var.tenant_id

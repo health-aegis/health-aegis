@@ -1,7 +1,3 @@
-# ---------------------------------------------------------------------------
-# Root outputs — key values needed for post-deployment configuration
-# ---------------------------------------------------------------------------
-
 output "app_gateway_public_ip" {
   description = "Public IP address of the Application Gateway — point your DNS here"
   value       = module.app_gateway.public_ip_address
@@ -27,9 +23,6 @@ output "tenant_id" {
   value       = data.azurerm_client_config.current.tenant_id
 }
 
-# ---------------------------------------------------------------------------
-# Networking
-# ---------------------------------------------------------------------------
 output "vnet_id" {
   description = "Resource ID of the virtual network"
   value       = module.networking.vnet_id
@@ -40,9 +33,6 @@ output "subnet_ids" {
   value       = module.networking.subnet_ids
 }
 
-# ---------------------------------------------------------------------------
-# AKS
-# ---------------------------------------------------------------------------
 output "aks_cluster_name" {
   description = "Name of the AKS cluster"
   value       = module.aks.cluster_name
@@ -73,9 +63,6 @@ output "aks_command_invoke_example" {
   value       = "az aks command invoke -g ${module.resource_group.name} -n ${module.aks.cluster_name} -- kubectl get pods -A"
 }
 
-# ---------------------------------------------------------------------------
-# ACR
-# ---------------------------------------------------------------------------
 output "acr_login_server" {
   description = "Login server FQDN of the container registry"
   value       = module.acr.login_server
@@ -86,9 +73,6 @@ output "acr_name" {
   value       = module.acr.name
 }
 
-# ---------------------------------------------------------------------------
-# Workload Identity
-# ---------------------------------------------------------------------------
 output "workload_identity_client_id" {
   description = "Client ID of the workload identity — annotate Kubernetes ServiceAccount with this"
   value       = module.workload_identity.client_id
@@ -99,9 +83,6 @@ output "workload_identity_principal_id" {
   value       = module.workload_identity.principal_id
 }
 
-# ---------------------------------------------------------------------------
-# Key Vault
-# ---------------------------------------------------------------------------
 output "key_vault_name" {
   description = "Name of the Key Vault"
   value       = module.key_vault.name
@@ -112,25 +93,16 @@ output "key_vault_uri" {
   value       = module.key_vault.vault_uri
 }
 
-# ---------------------------------------------------------------------------
-# CosmosDB
-# ---------------------------------------------------------------------------
 output "cosmosdb_account_name" {
   description = "Name of the CosmosDB account"
   value       = module.cosmosdb.account_name
 }
 
-# ---------------------------------------------------------------------------
-# Storage
-# ---------------------------------------------------------------------------
 output "storage_account_name" {
   description = "Name of the storage account"
   value       = module.storage.account_name
 }
 
-# ---------------------------------------------------------------------------
-# PostgreSQL
-# ---------------------------------------------------------------------------
 output "postgres_server_name" {
   description = "Name of the PostgreSQL Flexible Server"
   value       = module.postgres.server_name
@@ -141,9 +113,6 @@ output "postgres_fqdn" {
   value       = module.postgres.fqdn
 }
 
-# ---------------------------------------------------------------------------
-# Bastion
-# ---------------------------------------------------------------------------
 output "bastion_public_ip" {
   description = "Public IP of the Azure Bastion host (connect via Azure Portal)"
   value       = module.bastion.bastion_public_ip
@@ -154,17 +123,11 @@ output "bastion_name" {
   value       = module.bastion.bastion_name
 }
 
-# ---------------------------------------------------------------------------
-# Document Intelligence
-# ---------------------------------------------------------------------------
 output "doc_intelligence_endpoint" {
   description = "Endpoint URL for the Document Intelligence service"
   value       = module.doc_intelligence.endpoint
 }
 
-# ---------------------------------------------------------------------------
-# Monitoring
-# ---------------------------------------------------------------------------
 output "app_insights_connection_string" {
   description = "Application Insights connection string"
   value       = module.monitoring.app_insights_connection_string
@@ -176,9 +139,6 @@ output "log_analytics_workspace_id" {
   value       = module.monitoring.workspace_id
 }
 
-# ---------------------------------------------------------------------------
-# Next steps guide
-# ---------------------------------------------------------------------------
 output "next_steps" {
   description = "Post-deployment steps to get the Aegis platform running"
   value       = <<-EOT
@@ -245,9 +205,6 @@ output "next_steps" {
   EOT
 }
 
-# ---------------------------------------------------------------------------
-# Function App
-# ---------------------------------------------------------------------------
 output "function_app_name" {
   description = "Name of the Azure Function App"
   value       = module.function_app.function_app_name

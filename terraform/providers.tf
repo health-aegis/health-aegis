@@ -25,12 +25,8 @@ terraform {
   }
 }
 
-# -----------------------------------------------------------------------
-# AzureRM provider — main provider for all Azure resources
-# purge_soft_delete_on_destroy=true: ensures Key Vault soft-deleted items
-# are purged when Terraform destroys them, so the vault name can be reused
-# immediately (otherwise the name is reserved for soft_delete_retention_days).
-# ---------------------------------------------------------------------------
+# purge_soft_delete_on_destroy=true: ensures Key Vault soft-deleted items are purged on destroy
+# so the vault name can be reused immediately without waiting out the retention period.
 provider "azurerm" {
   features {
     key_vault {
@@ -47,25 +43,7 @@ provider "azuread" {}
 
 provider "random" {}
 
-# ---------------------------------------------------------------------------
-# Kubernetes and Helm providers use kube_admin_config (cert-based credentials).
-#
-# WHY kube_admin_config and NOT kube_config:
-#   kube_config contains AAD-integrated credentials that require an interactive
-#   az login + token refresh. In CI pipelines this breaks because there is no
-#   browser available. kube_admin_config provides static certificate-based
-#   cluster-admin credentials that work non-interactively.
-#
-#   kube_admin_config is only populated when:
-#     azure_active_directory_role_based_access_control {
-#       managed            = true
-#       azure_rbac_enabled = true
-#     }
-#   is configured on the cluster (which we do in the aks module).
-#
-# IMPORTANT: These providers create a dependency on the AKS module.
-# Terraform resolves this automatically through the module output reference.
-# ---------------------------------------------------------------------------
+# Kubernetes and Helm providers use kube_admin_config (cert-based, works non-interactively in CI).
 provider "kubernetes" {
   host = module.aks.kube_admin_config.host
 
