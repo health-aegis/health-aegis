@@ -125,7 +125,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_api_gateway == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_api_gateway == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -141,7 +141,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_health_records == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_health_records == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -157,7 +157,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_medication == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_medication == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -173,7 +173,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_ai == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_ai == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -189,7 +189,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_notification == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_notification == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -205,7 +205,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_imaging == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_imaging == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -221,7 +221,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_diagnostic == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_diagnostic == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -237,7 +237,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_coordinator == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_coordinator == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -253,7 +253,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_image_analysis == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_image_analysis == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -269,7 +269,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_patient_history == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_patient_history == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
@@ -285,7 +285,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-env.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.changed_client == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.resolve-env.outputs.env == 'prod' || needs.resolve-env.outputs.changed_client == 'true') &&
       (needs.await-approval.result == 'success' || needs.await-approval.result == 'skipped')
     uses: ./.github/workflows/common-cd.yml
     with:
