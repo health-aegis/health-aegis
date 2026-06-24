@@ -1,14 +1,3 @@
-# ---------------------------------------------------------------------------
-# Terraform Core — Reusable workflow
-#
-# Accepts an "action" input:
-#   plan  → validate + plan + post summary (safe, no infra changes)
-#   apply → validate + plan + apply        (triggered manually via workflow_dispatch)
-#
-# This replaces the GitHub Environment approval gate (paid feature).
-# The caller controls when apply runs — workflow_dispatch IS the approval.
-# ---------------------------------------------------------------------------
-
 name: "Terraform Core (Reusable)"
 
 on:
@@ -28,9 +17,6 @@ on:
         type: string
         default: "1.7.5"
 
-# ────────────────────────────────────────────────────────────────────────────
-# Job 1 — Validate + Plan  (runs on every call)
-# ────────────────────────────────────────────────────────────────────────────
 jobs:
   plan:
     name: "Validate & Plan (${{ inputs.environment }})"
@@ -119,12 +105,6 @@ jobs:
           path: tfplan.binary
           retention-days: 1
 
-# ────────────────────────────────────────────────────────────────────────────
-# Job 2 — Apply  (only when action == 'apply')
-#
-# Triggered manually via workflow_dispatch in terraform-apply.yml.
-# Choosing action=apply in the dispatch input IS the approval decision.
-# ────────────────────────────────────────────────────────────────────────────
   apply:
     name: "Apply (${{ inputs.environment }})"
     needs: plan
@@ -133,11 +113,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    outputs:
-      workload_identity_client_id: ${{ steps.tf-outputs.outputs.client_id }}
-      tenant_id:                    ${{ steps.tf-outputs.outputs.tenant_id }}
-      key_vault_name:               ${{ steps.tf-outputs.outputs.kv_name }}
-
     env:
       ARM_USE_OIDC:        "true"
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
@@ -217,13 +192,6 @@ jobs:
       - name: Terraform Apply
         run: terraform apply -auto-approve -input=false tfplan.binary
 
-      - name: Capture Terraform outputs
-        id: tf-outputs
-        run: |
-          echo "client_id=$(terraform output -raw workload_identity_client_id)" >> "$GITHUB_OUTPUT"
-          echo "tenant_id=$(terraform output -raw tenant_id)"                   >> "$GITHUB_OUTPUT"
-          echo "kv_name=$(terraform output -raw key_vault_name)"                >> "$GITHUB_OUTPUT"
-
       - name: Write apply summary
         if: always()
         run: |
@@ -238,54 +206,3 @@ jobs:
             echo "| **Run ID** | \`${{ github.run_id }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-# ────────────────────────────────────────────────────────────────────────────
-# Job 4 — Sync GitOps  (only after a successful apply)
-#
-# Patches helm/environments/<env>/values.yaml in k8s-manifests with the
-# real Terraform outputs so ArgoCD always deploys with the correct client ID,
-# tenant ID, and Key Vault name — even after a destroy + re-apply.
-#
-# Requires secret GITOPS_PAT — a GitHub PAT with repo write scope on
-# health-aegis/k8s-manifests (Settings → Secrets → GITOPS_PAT).
-# ────────────────────────────────────────────────────────────────────────────
-  sync-gitops:
-    name: "Sync GitOps values (${{ inputs.environment }})"
-    needs: apply
-    if: inputs.action == 'apply'
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout k8s-manifests
-        uses: actions/checkout@v4
-        with:
-          repository: health-aegis/k8s-manifests
-          token: ${{ secrets.GITOPS_PAT }}
-          path: k8s-manifests
-
-      - name: Patch Helm environment values
-        env:
-          CLIENT_ID: ${{ needs.apply.outputs.workload_identity_client_id }}
-          TENANT_ID: ${{ needs.apply.outputs.tenant_id }}
-          KV_NAME:   ${{ needs.apply.outputs.key_vault_name }}
-          # Terraform uses 'test' for dev environment; map it to Helm's 'dev'
-          HELM_ENV:  ${{ inputs.environment == 'test' && 'dev' || inputs.environment }}
-        run: |
-          VALUES="k8s-manifests/helm/environments/${HELM_ENV}/values.yaml"
-          sed -i "s|clientId: \".*\"|clientId: \"${CLIENT_ID}\"|"  "$VALUES"
-          sed -i "s|tenantId: \".*\"|tenantId: \"${TENANT_ID}\"|"  "$VALUES"
-          sed -i "s|name: aegis-kv-[a-z-]*|name: ${KV_NAME}|"     "$VALUES"
-
-      - name: Commit and push to k8s-manifests
-        working-directory: k8s-manifests
-        run: |
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name  "github-actions[bot]"
-          git add helm/environments/
-          git diff --cached --quiet \
-            && echo "No value changes — skipping commit" \
-            && exit 0
-          git commit -m "chore(gitops): sync Helm values from Terraform ${{ inputs.environment }} apply [skip ci]"
-          git push
