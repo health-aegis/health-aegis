@@ -28,6 +28,7 @@ app.add_middleware(
 
 # Key Vault CSI injects this as MONGODB_URI (same secret name as api-gateway uses).
 MONGODB_URI = os.getenv("MONGODB_URI", "")
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "aegis_db")
 cosmos_client = None
 cosmos_db = None
 
@@ -38,9 +39,8 @@ async def startup():
     if MONGODB_URI:
         try:
             cosmos_client = AsyncIOMotorClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-            # get_default_database() reads the DB name from the URI path segment
-            cosmos_db = cosmos_client.get_default_database()
-            await cosmos_client.admin.command("ping")
+            cosmos_db = cosmos_client[MONGODB_DB_NAME]
+            await cosmos_db.command("ping")
             print(f"✅ [patient-history-agent] Cosmos DB connected — db={cosmos_db.name}")
         except Exception as e:
             print(f"⚠️  [patient-history-agent] Cosmos DB connection failed: {e}")
