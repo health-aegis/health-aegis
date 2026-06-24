@@ -1,4 +1,3 @@
-# Build stage — TypeScript compilation (self-contained, no shared/ needed)
 FROM node:20-alpine AS builder
 
 WORKDIR /app
@@ -11,7 +10,6 @@ COPY src/ ./src/
 
 RUN npm run build
 
-# ── Production stage ──────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
 
 WORKDIR /app

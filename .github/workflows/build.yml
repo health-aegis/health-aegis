@@ -1,33 +1,3 @@
-# ---------------------------------------------------------------------------
-# Aegis Health — Build Pipeline
-#
-# JOB GRAPH:
-#
-#   prepare
-#     ├── test  ────────────┐
-#     ├── sonar ────────────┼──► build ──► trivy ──► push ──► release ──► notify
-#     └── snyk  ────────────┘
-#
-# • prepare   — detect changed services, set image tag + push flag
-# • test      — run unit tests per changed service (matrix)
-# • sonar     — SonarCloud SAST analysis per changed service (matrix)
-# • snyk      — Snyk dependency vulnerability scan per changed service (matrix)
-# • build     — docker build; image saved as artifact (not pushed yet)
-# • trivy     — scan artifact image; FAILS on HIGH / CRITICAL
-# • push      — push to ACR only after Trivy passes; pushes :latest on main + develop
-# • release   — GitHub Release (main branch only)
-# • notify    — email on ALL outcomes (always)
-#
-# Required secrets:
-#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  — OIDC
-#   ACR_NAME          — registry name without .azurecr.io
-#   VITE_API_URL      — injected into the React client at build time
-#   SONAR_TOKEN       — SonarCloud user token
-#   SONAR_HOST_URL    — https://sonarcloud.io
-#   SNYK_TOKEN        — Snyk API token
-#   SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO
-# ---------------------------------------------------------------------------
-
 name: Build
 
 on:
@@ -48,13 +18,6 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 1 — PREPARE
-# Detects which services changed and outputs:
-#   tag    — sha-<7-char commit hash>
-#   push   — 'true' on push events, 'false' on pull_requests
-#   matrix — JSON include-array of changed services
-# ─────────────────────────────────────────────────────────────────────────────
 jobs:
   prepare:
     name: "Prepare"
@@ -116,7 +79,6 @@ jobs:
         id: out
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            # ── Auto-generate next semver tag ─────────────────────────────────
             git fetch --tags --quiet
             LATEST=$(git describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null || echo "v0.0.0")
             echo "Latest tag: ${LATEST}"
@@ -134,20 +96,15 @@ jobs:
               NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
             fi
 
-            # Set TAG first so it is always assigned before any git operation
             TAG="${NEXT}"
             echo "Auto-versioning: ${LATEST} → ${TAG}"
 
-            # Create local tag (tolerate "already exists" on re-runs)
             git tag "${TAG}" 2>/dev/null || echo "ℹ Tag ${TAG} already exists locally"
-            # Push to remote; if it fails (concurrent run already pushed) continue
             git push origin "${TAG}" || echo "⚠ Tag ${TAG} already on remote — reusing"
           else
-            # develop → immutable SHA tag
             TAG="sha-${GITHUB_SHA:0:7}"
           fi
 
-          # Safety net: never emit an empty tag
           if [ -z "${TAG}" ]; then
             TAG="sha-${GITHUB_SHA:0:7}"
             echo "⚠ TAG was empty — falling back to SHA: ${TAG}"
@@ -208,9 +165,6 @@ jobs:
             echo 'any_changed=true' >> "$GITHUB_OUTPUT"
           fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 2 — TEST  (parallel, one instance per changed service)
-# ─────────────────────────────────────────────────────────────────────────────
   test:
     name: "Test — ${{ matrix.service }}"
     runs-on: ubuntu-latest
@@ -237,9 +191,6 @@ jobs:
           python -m pytest tests/ -v --tb=short 2>/dev/null \
             || echo "No tests directory found — skipping"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 3 — SONAR  (parallel, one instance per changed service)
-# ─────────────────────────────────────────────────────────────────────────────
   sonar:
     name: "SonarCloud — ${{ matrix.service }}"
     runs-on: ubuntu-latest
@@ -265,9 +216,6 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 4 — SNYK  (parallel, one instance per changed service)
-# ─────────────────────────────────────────────────────────────────────────────
   snyk:
     name: "Snyk — ${{ matrix.service }}"
     runs-on: ubuntu-latest
@@ -306,11 +254,6 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 5 — BUILD  (after test + sonar + snyk all pass)
-# Builds the Docker image and saves it as a workflow artifact.
-# The image is NOT pushed to ACR yet — Trivy must pass first.
-# ─────────────────────────────────────────────────────────────────────────────
   build:
     name: "Build — ${{ matrix.service }}"
     runs-on: ubuntu-latest
@@ -338,8 +281,6 @@ jobs:
           build-args: |
             ${{ matrix.service == 'client' && format('VITE_API_URL={0}', secrets.VITE_API_URL) || '' }}
 
-      # Save image as a compressed tar so Trivy and Push jobs can load it
-      # without re-building. Each service gets its own named artifact.
       - name: Save image to artifact
         run: |
           IMAGE="${{ secrets.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}"
@@ -351,9 +292,6 @@ jobs:
           path:            /tmp/${{ matrix.service }}.tar.gz
           retention-days:  1
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 6 — TRIVY  (scan artifact image — FAILS on HIGH or CRITICAL)
-# ─────────────────────────────────────────────────────────────────────────────
   trivy:
     name: "Trivy — ${{ matrix.service }}"
     runs-on: ubuntu-latest
@@ -405,11 +343,6 @@ jobs:
           sarif_file: trivy-${{ matrix.service }}.sarif
           category:   trivy-${{ matrix.service }}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 7 — PUSH  (push events only; Trivy must pass)
-# Loads the artifact image and pushes it to ACR.
-# :latest is updated only on merges to main.
-# ─────────────────────────────────────────────────────────────────────────────
   push:
     name: "Push — ${{ matrix.service }}"
     runs-on: ubuntu-latest
@@ -447,14 +380,10 @@ jobs:
 
       - name: Push image
         run: |
-          # Both dev and prod use the same ACR (aegistestacr).
-          # dev images carry sha-XXXXXXX tags; prod images carry vX.Y.Z semver tags.
+          # dev: sha-XXXXXXX tags; prod: vX.Y.Z semver tags
           ACR="${{ secrets.ACR_NAME }}.azurecr.io"
           docker push "${ACR}/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 8 — RELEASE  (GitHub Release — main only, after all pushes succeed)
-# ─────────────────────────────────────────────────────────────────────────────
   release:
     name: "Release"
     runs-on: ubuntu-latest
@@ -488,9 +417,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 9 — NOTIFY  (always — success AND failure)
-# ─────────────────────────────────────────────────────────────────────────────
   notify:
     name: "Notify"
     runs-on: ubuntu-latest

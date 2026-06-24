@@ -1,13 +1,3 @@
-# ---------------------------------------------------------------------------
-# Root variables — all configurable parameters for the Aegis platform
-# Sensitive variables (passwords, API keys) have no defaults and must be
-# passed via terraform.tfvars, environment variables (TF_VAR_*), or a
-# secrets manager. Never hardcode secret values in .tf files.
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Global
-# ---------------------------------------------------------------------------
 variable "environment" {
   description = "Deployment environment (dev / staging / prod)"
   type        = string
@@ -37,9 +27,6 @@ variable "location" {
   default     = "centralindia"
 }
 
-# ---------------------------------------------------------------------------
-# Networking
-# ---------------------------------------------------------------------------
 variable "vnet_address_space" {
   description = "CIDR block for the virtual network"
   type        = string
@@ -76,9 +63,6 @@ variable "bastion_subnet_cidr" {
   default     = "10.0.20.0/26"
 }
 
-# ---------------------------------------------------------------------------
-# AKS
-# ---------------------------------------------------------------------------
 variable "kubernetes_version" {
   description = "Kubernetes version for the AKS cluster (e.g. '1.29')"
   type        = string
@@ -121,17 +105,11 @@ variable "kubernetes_service_account_name" {
   default     = "aegis-workload-identity"
 }
 
-# ---------------------------------------------------------------------------
-# ACR
-# ---------------------------------------------------------------------------
 variable "acr_name" {
   description = "Name of the Azure Container Registry (globally unique, alphanumeric only)"
   type        = string
 }
 
-# ---------------------------------------------------------------------------
-# Key Vault
-# ---------------------------------------------------------------------------
 variable "key_vault_name" {
   description = "Name of the Azure Key Vault (globally unique, 3-24 chars)"
   type        = string
@@ -157,9 +135,6 @@ variable "deployer_ip" {
   default     = "0.0.0.0"
 }
 
-# ---------------------------------------------------------------------------
-# CosmosDB
-# ---------------------------------------------------------------------------
 variable "cosmosdb_account_name" {
   description = "Name of the CosmosDB account (globally unique)"
   type        = string
@@ -171,9 +146,6 @@ variable "cosmosdb_database_name" {
   default     = "aegis_db"
 }
 
-# ---------------------------------------------------------------------------
-# Storage
-# ---------------------------------------------------------------------------
 variable "storage_account_name_prefix" {
   description = <<-EOT
     Prefix for the storage account name. A random suffix is NOT added — the
@@ -189,9 +161,6 @@ variable "storage_container_names" {
   default     = ["health-records", "medical-images", "uploads", "exports"]
 }
 
-# ---------------------------------------------------------------------------
-# PostgreSQL
-# ---------------------------------------------------------------------------
 variable "postgres_db_name" {
   description = "Name of the PostgreSQL database to create"
   type        = string
@@ -204,27 +173,17 @@ variable "postgres_admin_password" {
   sensitive   = true
 }
 
-# ---------------------------------------------------------------------------
-# Document Intelligence
-# ---------------------------------------------------------------------------
 variable "doc_intelligence_name" {
   description = "Name of the Azure Document Intelligence (Form Recognizer) resource"
   type        = string
 }
 
-# ---------------------------------------------------------------------------
-# Communication Services
-# ---------------------------------------------------------------------------
 variable "communication_service_name" {
   description = "Name of the Azure Communication Service resource"
   type        = string
   default     = "" # auto-generated from prefix if empty
 }
 
-# ---------------------------------------------------------------------------
-# Secrets to store in Key Vault
-# (values passed at apply time — never committed to source control)
-# ---------------------------------------------------------------------------
 variable "jwt_secret" {
   description = "JWT signing secret for the Aegis API"
   type        = string
@@ -252,18 +211,12 @@ variable "azure_ai_key" {
   default     = ""
 }
 
-# ---------------------------------------------------------------------------
-# App Gateway
-# ---------------------------------------------------------------------------
 variable "enable_waf" {
   description = "Enable WAF_v2 SKU with OWASP 3.2 Prevention rules on the Application Gateway. Set true for production."
   type        = bool
   default     = false
 }
 
-# ---------------------------------------------------------------------------
-# Key Vault hardening
-# ---------------------------------------------------------------------------
 variable "key_vault_purge_protection" {
   description = "Enable purge protection on Key Vault. Once enabled, cannot be disabled. Use true for production."
   type        = bool
@@ -276,9 +229,6 @@ variable "key_vault_retention_days" {
   default     = 7
 }
 
-# ---------------------------------------------------------------------------
-# Function App
-# ---------------------------------------------------------------------------
 variable "app_base_url" {
   description = "Base URL of the Aegis web application (used in notification email links)"
   type        = string

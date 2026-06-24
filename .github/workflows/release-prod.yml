@@ -1,26 +1,3 @@
-# ---------------------------------------------------------------------------
-# Aegis Health — Production Release Pipeline
-#
-# Triggered by a semver git tag (v1.2.3).  Builds all service images,
-# pushes them to the prod ACR (aegisprodacr.azurecr.io) tagged with the
-# release version, waits for a human reviewer, then patches
-# k8s-manifests/environments/prod/values.yaml so ArgoCD picks it up.
-#
-# JOB GRAPH:
-#
-#   prepare ──► build ──► trivy ──► await-approval ──► push-prod ──► update-manifest ──► notify
-#
-# Required secrets:
-#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  — OIDC (must
-#     have AcrPush on PROD_ACR_NAME and repo-write on k8s-manifests via PAT)
-#   PROD_ACR_NAME   — prod registry name without .azurecr.io (e.g. aegisprodacr)
-#   ACR_NAME        — dev/test registry name (images already built here; used
-#                     as build cache source to avoid rebuilding from scratch)
-#   GITOPS_PAT      — PAT with repo write on health-aegis/k8s-manifests
-#   SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO
-#   VITE_API_URL    — injected into the React client at build time
-# ---------------------------------------------------------------------------
-
 name: Release — Production
 
 on:
@@ -32,10 +9,6 @@ concurrency:
   group: release-prod-${{ github.ref_name }}
   cancel-in-progress: false
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 1 — PREPARE
-# For a release every service is built (full release, not just changed files).
-# ─────────────────────────────────────────────────────────────────────────────
 jobs:
   prepare:
     name: "Release – Prepare"
@@ -70,11 +43,6 @@ jobs:
           ]}
           MATRIX
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 2 — BUILD
-# Builds each service image and saves as artifact for Trivy + Push.
-# Uses dev ACR's build cache to avoid a cold rebuild.
-# ─────────────────────────────────────────────────────────────────────────────
   build:
     name: "Release – Build — ${{ matrix.service }}"
     runs-on: ubuntu-latest
@@ -111,9 +79,6 @@ jobs:
           path:           /tmp/${{ matrix.service }}.tar.gz
           retention-days: 1
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 3 — TRIVY  (fails on HIGH / CRITICAL)
-# ─────────────────────────────────────────────────────────────────────────────
   trivy:
     name: "Release – Trivy — ${{ matrix.service }}"
     runs-on: ubuntu-latest
@@ -163,10 +128,6 @@ jobs:
           sarif_file: trivy-${{ matrix.service }}.sarif
           category:   trivy-prod-${{ matrix.service }}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 4 — AWAIT APPROVAL  (required reviewer gate before prod push)
-# Configure: Settings → Environments → production → Required reviewers
-# ─────────────────────────────────────────────────────────────────────────────
   await-approval:
     name: "Release – Await production approval"
     runs-on: ubuntu-latest
@@ -177,11 +138,6 @@ jobs:
       - name: Approval granted
         run: echo "✅ Production release approved — proceeding to push."
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 5 — PUSH TO PROD ACR
-# Loads each artifact image and pushes to aegisprodacr.azurecr.io with the
-# semver tag.
-# ─────────────────────────────────────────────────────────────────────────────
   push-prod:
     name: "Release – Push — ${{ matrix.service }}"
     runs-on: ubuntu-latest
@@ -218,11 +174,6 @@ jobs:
           docker push "${{ secrets.PROD_ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ needs.prepare.outputs.tag }}"
           echo "  ✓ pushed ${{ matrix.service }}:${{ needs.prepare.outputs.tag }} to ${{ secrets.PROD_ACR_NAME }}"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 6 — UPDATE MANIFEST
-# Writes the semver tag into k8s-manifests/environments/prod/values.yaml for
-# every service so ArgoCD triggers the prod rollout.
-# ─────────────────────────────────────────────────────────────────────────────
   update-manifest:
     name: "Release – Update prod manifest"
     runs-on: ubuntu-latest
@@ -248,7 +199,6 @@ jobs:
         run: |
           VALUES="k8s-manifests/environments/prod/values.yaml"
 
-          # Bootstrap prod directory if it doesn't exist yet in k8s-manifests
           if [ ! -f "$VALUES" ]; then
             SRC="helm/environments/prod"
             echo "⚕ Bootstrapping k8s-manifests/environments/prod/"
@@ -286,9 +236,6 @@ jobs:
           git rebase origin/main
           git push origin HEAD:main
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 7 — NOTIFY  (always)
-# ─────────────────────────────────────────────────────────────────────────────
   notify:
     name: "Release – Notify"
     runs-on: ubuntu-latest

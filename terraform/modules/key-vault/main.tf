@@ -1,32 +1,3 @@
-# ---------------------------------------------------------------------------
-# Key Vault module — secret store for all sensitive configuration
-#
-# NETWORK ACCESS DESIGN:
-#   public_network_access_enabled = true   (intentional — see below)
-#   network_acls.default_action   = "Deny"
-#   network_acls.ip_rules         = [var.deployer_ip]
-#
-#   WHY keep public access enabled with ACLs instead of full private-only?
-#   When public_network_access_enabled=false, the Terraform provider itself
-#   can only reach Key Vault via the private endpoint — which means the runner
-#   must be inside the VNet. For initial bootstrapping from a developer
-#   workstation or a GitHub Actions runner with a known IP, we allow that
-#   single IP via ip_rules while denying everything else. After bootstrap,
-#   set deployer_ip to "" and set public_network_access_enabled=false to
-#   lock down completely (requires a VNet-connected runner for future applies).
-#
-# SECRETS ITERATION:
-#   We use toset(keys(nonsensitive(var.secrets))) instead of var.secrets directly
-#   because for_each cannot iterate over sensitive values — Terraform refuses to
-#   use sensitive collections as for_each keys (keys are shown in plan output).
-#   nonsensitive() unwraps the map keys only; the values remain sensitive throughout.
-#
-# ACCESS POLICIES:
-#   - Deployer (human/CI principal): full CRUD to write initial secrets.
-#   - Workload identity (pod identity): Get/List only — pods read secrets,
-#     they never need to write or purge them.
-# ---------------------------------------------------------------------------
-
 data "azurerm_client_config" "current" {}
 
 resource "azurerm_key_vault" "this" {
@@ -48,11 +19,13 @@ resource "azurerm_key_vault" "this" {
   }
 
   tags = var.tags
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
-# ---------------------------------------------------------------------------
-# Access policy: Terraform deployer (human or service principal running TF)
-# ---------------------------------------------------------------------------
+# Terraform deployer (human or service principal running TF)
 resource "azurerm_key_vault_access_policy" "deployer" {
   key_vault_id = azurerm_key_vault.this.id
   tenant_id    = data.azurerm_client_config.current.tenant_id
@@ -75,9 +48,7 @@ resource "azurerm_key_vault_access_policy" "deployer" {
   ]
 }
 
-# ---------------------------------------------------------------------------
-# Access policy: Workload identity — pods can Get/List secrets from Key Vault
-# ---------------------------------------------------------------------------
+# Workload identity — pods can Get/List secrets from Key Vault
 resource "azurerm_key_vault_access_policy" "workload_identity" {
   key_vault_id = azurerm_key_vault.this.id
   tenant_id    = data.azurerm_client_config.current.tenant_id
@@ -86,9 +57,6 @@ resource "azurerm_key_vault_access_policy" "workload_identity" {
   secret_permissions = ["Get", "List"]
 }
 
-# ---------------------------------------------------------------------------
-# Secrets — iterate by key name; values remain sensitive
-# ---------------------------------------------------------------------------
 resource "azurerm_key_vault_secret" "secrets" {
   # Use nonsensitive() on keys ONLY — keys appear in plan output as resource
   # addresses and cannot be sensitive. Values come from the original sensitive
@@ -106,9 +74,6 @@ resource "azurerm_key_vault_secret" "secrets" {
   tags = var.tags
 }
 
-# ---------------------------------------------------------------------------
-# Private endpoint — connects Key Vault to the pe-subnet
-# ---------------------------------------------------------------------------
 resource "azurerm_private_endpoint" "kv" {
   name                = "${var.key_vault_name}-pe"
   location            = var.location
@@ -130,9 +95,6 @@ resource "azurerm_private_endpoint" "kv" {
   tags = var.tags
 }
 
-# ---------------------------------------------------------------------------
-# Private DNS zone for Key Vault
-# ---------------------------------------------------------------------------
 resource "azurerm_private_dns_zone" "kv" {
   name                = "privatelink.vaultcore.azure.net"
   resource_group_name = var.resource_group_name

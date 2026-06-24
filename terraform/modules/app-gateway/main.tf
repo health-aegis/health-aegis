@@ -1,25 +1,3 @@
-# ---------------------------------------------------------------------------
-# Application Gateway module — Standard_v2 (dev/test) or WAF_v2 (prod)
-#
-# AGIC (Application Gateway Ingress Controller) is enabled as an AKS addon and
-# programs this gateway dynamically based on Kubernetes Ingress resources. All
-# backend pools, listeners, routing rules, and probes are managed by AGIC at
-# runtime, so Terraform ignores those fields after initial creation.
-#
-# lifecycle.ignore_changes is REQUIRED — without it, every `terraform apply`
-# would revert the AGIC-managed config back to the stub values below,
-# breaking all in-cluster routing.
-#
-# WAF (enable_waf = true): creates a separate azurerm_web_application_firewall_policy
-# (OWASP 3.2, Prevention mode) and attaches it via firewall_policy_id.
-# Azure retired the inline waf_configuration block — a WAF policy resource is
-# now required for WAF_v2 gateways.
-#
-# Traffic flow:
-#   Internet → Public IP → App Gateway → AKS pods
-#   (AGIC programs the routing rules from Kubernetes Ingress annotations)
-# ---------------------------------------------------------------------------
-
 resource "azurerm_public_ip" "appgw" {
   name                = "${var.name}-pip"
   resource_group_name = var.resource_group_name
@@ -29,8 +7,7 @@ resource "azurerm_public_ip" "appgw" {
   tags                = var.tags
 }
 
-# Azure retired the inline waf_configuration block on Application Gateway.
-# WAF must now be a separate azurerm_web_application_firewall_policy resource
+# WAF must be a separate azurerm_web_application_firewall_policy resource
 # attached via firewall_policy_id.
 resource "azurerm_web_application_firewall_policy" "this" {
   count               = var.enable_waf ? 1 : 0
@@ -61,9 +38,6 @@ resource "azurerm_application_gateway" "this" {
   resource_group_name = var.resource_group_name
   location            = var.location
   firewall_policy_id  = var.enable_waf ? azurerm_web_application_firewall_policy.this[0].id : null
-
-  # WAF policy attached via firewall_policy_id (replaces retired waf_configuration block).
-  firewall_policy_id = var.enable_waf ? azurerm_web_application_firewall_policy.this[0].id : null
 
   sku {
     name     = var.enable_waf ? "WAF_v2" : "Standard_v2"

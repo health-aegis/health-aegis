@@ -123,7 +123,7 @@ jobs:
 # Job 2 — Apply  (only when action == 'apply')
 #
 # Triggered manually via workflow_dispatch in terraform-apply.yml.
-# You choosing to run the dispatch IS the approval decision.
+# Choosing action=apply in the dispatch input IS the approval decision.
 # ────────────────────────────────────────────────────────────────────────────
   apply:
     name: "Apply (${{ inputs.environment }})"
@@ -172,11 +172,47 @@ jobs:
             -reconfigure \
             -input=false
 
-      - name: Download plan artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
-          path: .
+      - name: Import orphaned resources
+        run: |
+          # Resources created by a cancelled apply — exist in Azure but not in state.
+          # Each import uses || true so it is a no-op if already in state.
+          SUB="${ARM_SUBSCRIPTION_ID}"
+          RG="rg-aegis-test"
+
+          terraform import -var-file=environments/${{ inputs.environment }}/terraform.tfvars -input=false \
+            module.service_bus.azurerm_servicebus_namespace.this \
+            "/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.ServiceBus/namespaces/aegis-test-bus" || true
+
+          terraform import -var-file=environments/${{ inputs.environment }}/terraform.tfvars -input=false \
+            module.service_bus.azurerm_servicebus_queue.notifications \
+            "/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.ServiceBus/namespaces/aegis-test-bus/queues/notifications" || true
+
+          terraform import -var-file=environments/${{ inputs.environment }}/terraform.tfvars -input=false \
+            module.service_bus.azurerm_servicebus_namespace_authorization_rule.notification_worker \
+            "/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.ServiceBus/namespaces/aegis-test-bus/authorizationRules/notification-worker" || true
+
+          terraform import -var-file=environments/${{ inputs.environment }}/terraform.tfvars -input=false \
+            module.aks.azurerm_role_assignment.agic_rg_reader \
+            "/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.Authorization/roleAssignments/c98adc9548924bb98401b88c9d64c0f2" || true
+
+          terraform import -var-file=environments/${{ inputs.environment }}/terraform.tfvars -input=false \
+            module.aks.azurerm_role_assignment.agic_appgw_contributor \
+            "/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.Network/applicationGateways/aegis-test-appgw/providers/Microsoft.Authorization/roleAssignments/2ef1afea87174cfb8b735b70e8b1c0e5" || true
+
+          terraform import -var-file=environments/${{ inputs.environment }}/terraform.tfvars -input=false \
+            module.key_vault.azurerm_key_vault_access_policy.deployer \
+            "/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.KeyVault/vaults/aegis-kv-test/objectId/ac4d1323-c029-44ef-a020-15b912d31423" || true
+
+          terraform import -var-file=environments/${{ inputs.environment }}/terraform.tfvars -input=false \
+            'module.key_vault.azurerm_key_vault_secret.secrets["kv-servicebus-conn"]' \
+            "https://aegis-kv-test.vault.azure.net/secrets/kv-servicebus-conn/b89c7fff3cfb426cb1e54baf7d2e4734" || true
+
+      - name: Terraform Plan (pre-apply)
+        run: |
+          terraform plan \
+            -var-file=environments/${{ inputs.environment }}/terraform.tfvars \
+            -out=tfplan.binary \
+            -input=false
 
       - name: Terraform Apply
         run: terraform apply -auto-approve -input=false tfplan.binary
@@ -203,7 +239,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
 # ────────────────────────────────────────────────────────────────────────────
-# Job 3 — Sync GitOps  (only after a successful apply)
+# Job 4 — Sync GitOps  (only after a successful apply)
 #
 # Patches helm/environments/<env>/values.yaml in k8s-manifests with the
 # real Terraform outputs so ArgoCD always deploys with the correct client ID,
@@ -217,6 +253,7 @@ jobs:
     needs: apply
     if: inputs.action == 'apply'
     runs-on: ubuntu-latest
+    continue-on-error: true
     permissions:
       contents: read
 

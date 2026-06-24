@@ -26,9 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── Cosmos DB (MongoDB API) ──────────────────────────────────────────────────
 # Key Vault CSI injects this as MONGODB_URI (same secret name as api-gateway uses).
-# e.g. mongodb://aegisdb:KEY@aegisdb.mongo.cosmos.azure.com:10255/ai-health-agent?ssl=true&...
 MONGODB_URI = os.getenv("MONGODB_URI", "")
 cosmos_client = None
 cosmos_db = None
@@ -41,7 +39,6 @@ async def startup():
         try:
             cosmos_client = AsyncIOMotorClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
             # get_default_database() reads the DB name from the URI path segment
-            # (same DB that Mongoose api-gateway connects to)
             cosmos_db = cosmos_client.get_default_database()
             await cosmos_client.admin.command("ping")
             print(f"✅ [patient-history-agent] Cosmos DB connected — db={cosmos_db.name}")
@@ -51,9 +48,7 @@ async def startup():
         print("ℹ️  [patient-history-agent] MONGODB_URI not set — Cosmos data will be empty")
 
 
-# ─── PostgreSQL ───────────────────────────────────────────────────────────────
 # Key Vault CSI injects this as DATABASE_URL
-# e.g. postgresql://aegis:PASS@postgres-service:5432/imaging
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 SessionLocal = None
 
@@ -66,7 +61,6 @@ if DATABASE_URL:
         print(f"⚠️  [patient-history-agent] PostgreSQL setup failed: {e}")
 
 
-# ─── Helper ───────────────────────────────────────────────────────────────────
 def to_object_id(user_id: str):
     """
     The existing platform stores userId as a MongoDB ObjectId.
@@ -95,8 +89,6 @@ def clean_doc(doc):
     return doc
 
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
-
 @app.get("/history")
 async def get_patient_history(userId: str):
     """
@@ -119,7 +111,6 @@ async def get_patient_history(userId: str):
     # Match whether userId was stored as ObjectId (Mongoose default) or plain string
     user_filter = {"$or": [{"userId": user_oid}, {"userId": userId}]}
 
-    # ── Cosmos DB queries ─────────────────────────────────────────────────────
     if cosmos_db is not None:
         # Each collection in its own try/except so one failure never silences others
         try:
@@ -163,7 +154,6 @@ async def get_patient_history(userId: str):
         except Exception as e:
             print(f"⚠️  [patient-history-agent] appointments query error: {e}")
 
-    # ── PostgreSQL: image upload records ──────────────────────────────────────
     # imaging-service stores user_id as a string (UUID or the frontend userId)
     if SessionLocal is not None:
         try:
