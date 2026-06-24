@@ -38,3 +38,4 @@ CMD ["node", "dist/services/api-gateway/src/index.js"]
 
 
 
+
