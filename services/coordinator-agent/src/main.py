@@ -35,7 +35,7 @@ HISTORY_AGENT_URL = os.getenv("PATIENT_HISTORY_AGENT_URL", "http://patient-histo
 
 REQUEST_TIMEOUT = 25.0
 
-GEMINI_MODELS = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
+GEMINI_MODELS = ["gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
 
 ai_ready = False
 
