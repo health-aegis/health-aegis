@@ -69,7 +69,7 @@ async function processUserCycle(
       let updated = false;
 
       for (const schedule of med.schedules) {
-        const isPastDue = currentTimeStr > schedule.time;
+        const isPastDue = currentTimeStr >= schedule.time;
         const isNotTaken = !schedule.taken;
         const notYetProcessedToday =
           !schedule.takenAt || !schedule.takenAt.startsWith(`missed-${currentDateStr}`);

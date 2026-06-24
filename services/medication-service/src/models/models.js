@@ -7,6 +7,7 @@ const MedicationScheduleSchema = new mongoose.Schema({
 });
 
 const MedicationSchema = new mongoose.Schema({
+  userId:       { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
   name:         { type: String, required: true },
   dosage:       { type: String, required: true },
   frequency:    { type: String, required: true },
@@ -19,6 +20,7 @@ const MedicationSchema = new mongoose.Schema({
 });
 
 const CaregiverSchema = new mongoose.Schema({
+  userId:         { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
   name:           { type: String, required: true },
   relationship:   { type: String, required: true },
   phone:          { type: String, required: true },
@@ -27,6 +29,7 @@ const CaregiverSchema = new mongoose.Schema({
 });
 
 const SystemStatusSchema = new mongoose.Schema({
+  userId:               { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
   caregiverAlerted:     { type: Boolean, default: false },
   alertReason:          { type: String },
   lastNotificationSent: { type: String },
