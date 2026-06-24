@@ -10,8 +10,8 @@ export interface AlertPayload {
   medicationName: string;
   dosage: string;
   missedCount: number;
-  alertThreshold: number;
   alertReason: string;
+  scheduledTime?: string;
 }
 
 export async function sendMissedDoseAlert(payload: AlertPayload): Promise<boolean> {
@@ -58,16 +58,16 @@ export async function sendMissedDoseAlert(payload: AlertPayload): Promise<boolea
     <div class="body">
       <p class="greeting">Hello <strong>${payload.caregiverName}</strong>,</p>
       <div class="alert-box">
-        <p>Your patient has <strong>missed their scheduled medication</strong> and has reached the alert threshold. Please check in with them as soon as possible.</p>
+        <p>Your patient has <strong>missed their scheduled medication</strong>. Please check in with them as soon as possible.</p>
       </div>
       <p class="missed-count">${payload.missedCount}</p>
-      <p class="missed-label">Missed Doses</p>
+      <p class="missed-label">Missed Doses Today</p>
       <br/>
       <table class="details-table">
         <tr><td>Medication</td><td>${payload.medicationName}</td></tr>
         <tr><td>Dosage</td><td>${payload.dosage}</td></tr>
+        ${payload.scheduledTime ? `<tr><td>Scheduled At</td><td>${payload.scheduledTime}</td></tr>` : ''}
         <tr><td>Missed Count</td><td>${payload.missedCount} dose(s)</td></tr>
-        <tr><td>Alert Threshold</td><td>${payload.alertThreshold} dose(s)</td></tr>
         <tr><td>Alert Reason</td><td>${payload.alertReason}</td></tr>
         <tr><td>Alert Time</td><td>${new Date().toLocaleString()}</td></tr>
       </table>
@@ -79,7 +79,7 @@ export async function sendMissedDoseAlert(payload: AlertPayload): Promise<boolea
 </body>
 </html>`;
 
-  const text = `Aegis Health — Missed Medication Alert\n\nHello ${payload.caregiverName},\n\nMedication: ${payload.medicationName}\nDosage: ${payload.dosage}\nMissed: ${payload.missedCount} dose(s) (Threshold: ${payload.alertThreshold})\nReason: ${payload.alertReason}\nTime: ${new Date().toLocaleString()}\n\nPlease contact your patient immediately.`;
+  const text = `Aegis Health — Missed Medication Alert\n\nHello ${payload.caregiverName},\n\nMedication: ${payload.medicationName}\nDosage: ${payload.dosage}\n${payload.scheduledTime ? `Scheduled At: ${payload.scheduledTime}\n` : ''}Missed: ${payload.missedCount} dose(s)\nReason: ${payload.alertReason}\nTime: ${new Date().toLocaleString()}\n\nPlease contact your patient immediately.`;
 
   try {
     const poller = await client.beginSend({
