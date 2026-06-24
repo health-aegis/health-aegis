@@ -108,8 +108,13 @@ async def get_patient_history(userId: str):
     }
 
     user_oid = to_object_id(userId)
-    # Match whether userId was stored as ObjectId (Mongoose default) or plain string
-    user_filter = {"$or": [{"userId": user_oid}, {"userId": userId}]}
+    # Cover: Mongoose ObjectId, Mongoose string, Azure Function snake_case, plain string
+    user_filter = {"$or": [
+        {"userId":  user_oid},
+        {"userId":  userId},
+        {"user_id": user_oid},
+        {"user_id": userId},
+    ]}
 
     if cosmos_db is not None:
         # Each collection in its own try/except so one failure never silences others
