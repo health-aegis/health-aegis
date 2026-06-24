@@ -22,7 +22,7 @@ FROM nginx:alpine
 COPY client/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /usr/src/app/client/dist /usr/share/nginx/html
 
-# Fix permissions so the built-in nginx user (uid 101) can write temp files
+# Fix permissions so the built-in nginx user (uid 101) can write temp file
 RUN chown -R nginx:nginx /var/cache/nginx /usr/share/nginx/html \
     && touch /var/run/nginx.pid \
     && chown nginx:nginx /var/run/nginx.pid
