@@ -28,7 +28,7 @@ app.add_middleware(
 
 # Key Vault CSI injects this as MONGODB_URI (same secret name as api-gateway uses).
 MONGODB_URI = os.getenv("MONGODB_URI", "")
-MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "aegis_db")
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "test")
 cosmos_client = None
 cosmos_db = None
 
