@@ -6,26 +6,22 @@ on:
       service-name:
         required: true
         type: string
-        description: "Docker image / label (e.g. api-gateway)"
       helm-chart-key:
         required: true
         type: string
-        description: "Top-level key in environments/<env>/values.yaml"
       env:
         required: true
         type: string
-        description: "Target environment: dev or prod"
       tag:
         required: true
         type: string
-        description: "Image tag to set (e.g. sha-abc1234 or v1.2.3)"
     secrets:
       GITOPS_PAT:
         required: true
 
 jobs:
   update-manifest:
-    name: "CD – ${{ inputs.service-name }} → ${{ inputs.env }} @ ${{ inputs.tag }}"
+    name: "CD – ${{ inputs.service-name }} @ ${{ inputs.tag }}"
     runs-on: ubuntu-latest
 
     steps:
@@ -36,19 +32,17 @@ jobs:
           token:      ${{ secrets.GITOPS_PAT }}
           path:       manifest-repo
 
-      - name: Patch image tag in umbrella values
+      - name: Patch image tag
         run: |
-          VALUES="manifest-repo/environments/${{ inputs.env }}/values.yaml"
+          VALUES="manifest-repo/charts/${{ inputs.helm-chart-key }}/values-dev.yaml"
 
           if [ ! -f "$VALUES" ]; then
-            echo "⚠ ${VALUES} not found — k8s-manifests may not have been bootstrapped yet"
-            exit 1
+            echo "⚠ ${VALUES} not found — skipping"
+            exit 0
           fi
 
-          # yq env() handles hyphenated keys safely (e.g. "health-records-service")
-          HELM_KEY_NAME="${{ inputs.helm-chart-key }}" \
           NEW_TAG="${{ inputs.tag }}" \
-            yq e '.[env(HELM_KEY_NAME)].image.tag = env(NEW_TAG)' -i "${VALUES}"
+            yq e '.image.tag = env(NEW_TAG)' -i "${VALUES}"
 
           echo "✓ ${{ inputs.helm-chart-key }}.image.tag → ${{ inputs.tag }}"
 
@@ -58,14 +52,14 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add "environments/${{ inputs.env }}/values.yaml"
+          git add "charts/${{ inputs.helm-chart-key }}/values-dev.yaml"
 
           if git diff --cached --quiet; then
             echo "No changes — tag already up to date."
             exit 0
           fi
 
-          git commit -m "chore(${{ inputs.service-name }}): bump ${{ inputs.env }} image tag to ${{ inputs.tag }} [skip ci]"
+          git commit -m "chore(${{ inputs.service-name }}): bump image tag to ${{ inputs.tag }} [skip ci]"
 
           git pull --rebase origin main
           git push origin HEAD:main
