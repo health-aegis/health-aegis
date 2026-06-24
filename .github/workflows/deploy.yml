@@ -94,10 +94,17 @@ jobs:
           BRANCH="${{ github.event.workflow_run.head_branch || inputs.environment }}"
           SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
 
-          if [[ "${BRANCH}" == "main" || "${{ inputs.environment }}" == "prod" ]]; then
+          # Fetch tags first — semver tag on commit is the authoritative prod signal.
+          # head_branch can report the source branch for merge commits, so we don't rely on it alone.
+          git fetch --tags --quiet
+          SEMVER=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+
+          if [[ -n "${SEMVER}" || "${BRANCH}" == "main" || "${{ inputs.environment }}" == "prod" ]]; then
             ENV="prod"
-            git fetch --tags --quiet
-            TAG=$(git describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null || true)
+            TAG="${SEMVER}"
+            if [ -z "$TAG" ]; then
+              TAG=$(git describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null || true)
+            fi
             if [ -z "$TAG" ]; then
               TAG="${{ inputs.image_tag }}"
             fi
