@@ -26,6 +26,7 @@ app.add_middleware(
 
 # Key Vault CSI injects MONGODB_URI (same secret used by api-gateway and azure-function)
 MONGODB_URI = os.getenv("MONGODB_URI", "")
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "test")
 cosmos_client = None
 cosmos_db = None
 
@@ -36,9 +37,8 @@ async def startup():
     if MONGODB_URI:
         try:
             cosmos_client = AsyncIOMotorClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-            # get_default_database() reads DB name from the URI path segment
-            cosmos_db = cosmos_client.get_default_database()
-            await cosmos_client.admin.command("ping")
+            cosmos_db = cosmos_client[MONGODB_DB_NAME]
+            await cosmos_db.command("ping")
             print(f"✅ [image-analysis-agent] Cosmos DB connected — db={cosmos_db.name}")
         except Exception as e:
             print(f"⚠️  [image-analysis-agent] Cosmos DB connection failed: {e}")
