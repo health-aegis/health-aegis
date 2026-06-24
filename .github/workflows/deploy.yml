@@ -1,28 +1,3 @@
-# ---------------------------------------------------------------------------
-# Aegis Health — Deploy Pipeline
-#
-# develop → SHA-tagged images (aegistestacr) → environments/dev/values.yaml
-# main    → semver-tagged images (aegisprodacr) → environments/prod/values.yaml
-#           (prod pauses for a required reviewer before updating manifests)
-#
-# Image tag is determined by the Build workflow:
-#   develop → sha-<7>   (set by build.yml prepare job)
-#   main    → vX.Y.Z    (git describe --tags; developer must tag before pushing)
-#
-# JOB GRAPH:
-#
-#   resolve-env
-#     ├── await-approval   (prod only)
-#     ├── deploy-api-gateway          ──► common-cd.yml
-#     ├── deploy-health-records       ──► common-cd.yml
-#     ├── ...
-#     └── notify
-#
-# Required secrets:
-#   GITOPS_PAT   — PAT with repo write on health-aegis/k8s-manifests
-#   SMTP_*       — notification email
-# ---------------------------------------------------------------------------
-
 name: Deploy
 
 on:
@@ -48,9 +23,6 @@ concurrency:
   group: deploy-${{ github.event.workflow_run.head_branch || inputs.environment }}
   cancel-in-progress: false
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 1 — RESOLVE ENV + TAG + CHANGED SERVICES
-# ─────────────────────────────────────────────────────────────────────────────
 jobs:
   resolve-env:
     name: "CD – Resolve environment"
@@ -117,7 +89,6 @@ jobs:
 
           if [[ "${BRANCH}" == "main" || "${{ inputs.environment }}" == "prod" ]]; then
             ENV="prod"
-            # Build workflow auto-creates the semver tag; read it here
             git fetch --tags --quiet
             TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
             if [ -z "$TAG" ]; then
@@ -138,10 +109,6 @@ jobs:
           echo "env=${ENV}" >> "$GITHUB_OUTPUT"
           echo "Resolved → env=${ENV}  tag=${TAG}"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 2 — AWAIT APPROVAL  (prod only — skipped for dev)
-# Configure: Settings → Environments → production → Required reviewers
-# ─────────────────────────────────────────────────────────────────────────────
   await-approval:
     name: "CD – Await production approval"
     runs-on: ubuntu-latest
@@ -150,10 +117,6 @@ jobs:
     environment: production
     steps:
       - run: echo "✅ Production deployment approved — proceeding."
-
-# ─────────────────────────────────────────────────────────────────────────────
-# JOBS 3–13 — PER-SERVICE CD  (calls common-cd.yml, skipped if not changed)
-# ─────────────────────────────────────────────────────────────────────────────
 
   deploy-api-gateway:
     needs: [resolve-env, await-approval]
@@ -331,9 +294,6 @@ jobs:
     secrets:
       GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 14 — NOTIFY  (always)
-# ─────────────────────────────────────────────────────────────────────────────
   notify:
     name: "Notify"
     runs-on: ubuntu-latest
