@@ -34,15 +34,16 @@ jobs:
 
       - name: Patch image tag
         run: |
-          VALUES="manifest-repo/charts/${{ inputs.helm-chart-key }}/values-dev.yaml"
+          VALUES="manifest-repo/environments/${{ inputs.env }}/values.yaml"
 
           if [ ! -f "$VALUES" ]; then
             echo "⚠ ${VALUES} not found — skipping"
             exit 0
           fi
 
+          HELM_KEY_NAME="${{ inputs.helm-chart-key }}" \
           NEW_TAG="${{ inputs.tag }}" \
-            yq e '.image.tag = env(NEW_TAG)' -i "${VALUES}"
+            yq e '.[env(HELM_KEY_NAME)].image.tag = env(NEW_TAG)' -i "${VALUES}"
 
           echo "✓ ${{ inputs.helm-chart-key }}.image.tag → ${{ inputs.tag }}"
 
@@ -52,7 +53,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add "charts/${{ inputs.helm-chart-key }}/values-dev.yaml"
+          git add "environments/${{ inputs.env }}/values.yaml"
 
           if git diff --cached --quiet; then
             echo "No changes — tag already up to date."
